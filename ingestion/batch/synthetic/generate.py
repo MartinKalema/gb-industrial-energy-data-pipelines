@@ -33,7 +33,7 @@ DECIMAL_PATTERN = re.compile(r"^-?\d+\.\d{6}$")
 
 # The synthetic source represents one continuous fictional timeline.  These
 # anchors deliberately match the original reference evidence, so fixing range
-# composition does not change that known-good source bundle.
+# composition does not change those known-good source files.
 SYNTHETIC_TIMELINE_START_LOCAL_DATE = date(2026, 8, 26)
 SYNTHETIC_TIMELINE_START_UTC = datetime(2026, 8, 25, 23, 0, tzinfo=UTC)
 SYNTHETIC_HISTORY_BOUNDARY_UTC = datetime(2026, 8, 26, 11, 0, tzinfo=UTC)

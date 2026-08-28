@@ -153,7 +153,7 @@ class TrinoHttpClient:
         endpoint: str,
         *,
         user: str = "airflow",
-        source: str = "industrial-energy-bounded-batch",
+        source: str = "steam-delivery-data-pipeline",
         timeout_seconds: float = 60.0,
         query_timeout_seconds: float = 300.0,
         headers: Mapping[str, str] | None = None,
@@ -318,7 +318,7 @@ class IcebergLoaderConfig:
     catalog: str = "r2"
     iceberg_schema: str = "industrial_energy_validated"
     trino_user: str = "airflow"
-    trino_source: str = "industrial-energy-bounded-batch"
+    trino_source: str = "steam-delivery-data-pipeline"
     timeout_seconds: float = 60.0
     query_timeout_seconds: float = 300.0
     chunk_size: int = 200

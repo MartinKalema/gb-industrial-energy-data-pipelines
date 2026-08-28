@@ -9,6 +9,8 @@ gb_industrial_energy:
       port: "{{ env_var('DBT_TRINO_PORT', '8080') | int }}"
       database: "{{ env_var('DBT_TRINO_CATALOG', 'r2') }}"
       schema: "{{ env_var('DBT_TRINO_SCHEMA', 'industrial_energy') }}"
+      client_tags:
+        - "{{ env_var('DBT_TRINO_ATTEMPT_TAG', 'steam-delivery-dbt-unmanaged') }}"
       http_scheme: http
       # Keep catalog operations serial against the local R2 Data Catalog beta.
       # The history build is planning-heavy, and correctness is preferred over

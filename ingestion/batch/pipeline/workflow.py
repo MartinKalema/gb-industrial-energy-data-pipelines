@@ -204,7 +204,9 @@ def land_raw_bundle(
         raise PipelineError("generation result points outside the run work directory")
     manifest_path = Path(str(generation_result["manifest_path"])).resolve()
     if manifest_path != source_dir / "manifest.json":
-        raise PipelineError("generation manifest points outside the source bundle")
+        raise PipelineError(
+            "generation manifest points outside the generated source-files directory"
+        )
     manifest = _read_json(manifest_path)
     storage = _object_store(store)
     envelope_validator = _validator("raw_evidence_envelope")
@@ -630,3 +632,93 @@ def publish_batch_run_coverage(
     result = publisher.publish(coverage).to_dict()
     _write_json_atomic(Path(plan.work_dir) / "coverage-publication-result.json", result)
     return result
+
+
+def build_dimensional_mart_step(
+    plan_value: Mapping[str, Any],
+    coverage_result_value: Mapping[str, Any],
+    *,
+    step_name: str,
+    attempt_number: int = 1,
+    environment: Mapping[str, str] | None = None,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Build and test one restartable part of the dimensional mart."""
+
+    from .dbt_build import (
+        DIMENSIONAL_MART_DBT_STEPS,
+        FULL_DIMENSIONAL_MART_STEP,
+        DbtBuildConfig,
+        run_dbt_command_step,
+    )
+
+    plan = RunPlan.from_mapping(_require_mapping(plan_value, "plan"))
+    coverage_result = _require_mapping(coverage_result_value, "coverage_result")
+    if coverage_result.get("pipeline_run_id") != plan.pipeline_run_id:
+        raise PipelineError("coverage result belongs to another pipeline run")
+    if coverage_result.get("disposition") not in {"created", "reused"}:
+        raise PipelineError("dbt build requires successful coverage publication")
+    coverage_payload_sha256 = str(
+        coverage_result.get("coverage_payload_sha256", "")
+    )
+    if (
+        len(coverage_payload_sha256) != 64
+        or coverage_payload_sha256 != coverage_payload_sha256.lower()
+        or any(character not in "0123456789abcdef" for character in coverage_payload_sha256)
+    ):
+        raise PipelineError("coverage result has an invalid canonical payload hash")
+
+    step_by_name = {
+        step.name: step
+        for step in (FULL_DIMENSIONAL_MART_STEP, *DIMENSIONAL_MART_DBT_STEPS)
+    }
+    try:
+        step = step_by_name[step_name]
+    except KeyError as exc:
+        raise PipelineError(f"unknown governed dbt step: {step_name}") from exc
+    config = DbtBuildConfig.from_environment(REPOSITORY_ROOT, environment)
+    run_kwargs: dict[str, Any] = {
+        "step": step,
+        "pipeline_run_id": plan.pipeline_run_id,
+        "orchestrator_run_id": plan.orchestrator_run_id,
+        "attempt_number": attempt_number,
+    }
+    if command_runner is not None:
+        run_kwargs["command_runner"] = command_runner
+    result = run_dbt_command_step(config, **run_kwargs)
+    result["coverage_payload_sha256"] = coverage_payload_sha256
+    orchestrator_digest = hashlib.sha256(
+        plan.orchestrator_run_id.encode("utf-8")
+    ).hexdigest()[:16]
+    result_path = (
+        Path(plan.work_dir)
+        / "dbt"
+        / orchestrator_digest
+        / step.name
+        / f"try-{attempt_number:02d}.result.json"
+    )
+    result["result_path"] = str(result_path)
+    _write_json_atomic(result_path, result)
+    return result
+
+
+def build_dimensional_mart(
+    plan_value: Mapping[str, Any],
+    coverage_result_value: Mapping[str, Any],
+    *,
+    attempt_number: int = 1,
+    environment: Mapping[str, str] | None = None,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Build the full mart as one compatibility checkpoint."""
+
+    from .dbt_build import FULL_DIMENSIONAL_MART_STEP
+
+    return build_dimensional_mart_step(
+        plan_value,
+        coverage_result_value,
+        step_name=FULL_DIMENSIONAL_MART_STEP.name,
+        attempt_number=attempt_number,
+        environment=environment,
+        command_runner=command_runner,
+    )
