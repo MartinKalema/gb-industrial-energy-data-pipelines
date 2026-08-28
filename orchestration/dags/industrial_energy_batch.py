@@ -40,7 +40,8 @@ def _small_xcom(stage: str, value: Any) -> dict[str, Any]:
     dag_id="industrial_energy_bounded_batch",
     description=(
         "Generate a finite synthetic source range, land immutable raw evidence in R2, "
-        "validate or quarantine it, load accepted rows into Iceberg, and reconcile the run."
+        "validate or quarantine it, load accepted rows into Iceberg, reconcile the run, "
+        "and publish its successful operating-date coverage."
     ),
     schedule=None,
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -55,26 +56,27 @@ def _small_xcom(stage: str, value: Any) -> dict[str, Any]:
     },
     params={
         "start_date": Param(
-            "2026-08-27",
+            "2026-08-26",
             type="string",
             format="date",
             description="First Europe/London operating date to generate (inclusive).",
         ),
         "end_date": Param(
-            "2026-08-27",
+            "2026-08-26",
             type="string",
             format="date",
             description="Last Europe/London operating date to generate (inclusive).",
         ),
         "seed": Param(
-            20260827,
+            20260828,
             type="integer",
             minimum=0,
             maximum=9_223_372_036_854_775_807,
-            description="Deterministic synthetic-data seed.",
+            enum=[20260828],
+            description="Fixed project seed for the continuous synthetic timeline.",
         ),
         "generation_time_utc": Param(
-            "2026-08-28T00:00:00Z",
+            "2026-08-28T12:00:00Z",
             type="string",
             format="date-time",
             pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$",
@@ -146,12 +148,33 @@ def industrial_energy_bounded_batch():
             reconcile_run(plan, raw_result, validation_result, load_result),
         )
 
+    @task(
+        task_id="publish_batch_run_coverage",
+        multiple_outputs=False,
+        pool="iceberg_writer",
+        pool_slots=1,
+    )
+    def publish_coverage(
+        plan: dict[str, Any],
+        raw_result: dict[str, Any],
+        reconciliation_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        from ingestion.batch.pipeline.workflow import publish_batch_run_coverage
+
+        return _small_xcom(
+            "publish_batch_run_coverage",
+            publish_batch_run_coverage(plan, raw_result, reconciliation_result),
+        )
+
     plan = plan_run()
     generation_result = generate(plan)
     raw_result = land_raw(plan, generation_result)
     validation_result = validate(plan, raw_result)
     load_result = load_validated(plan, raw_result, validation_result)
-    reconcile(plan, raw_result, validation_result, load_result)
+    reconciliation_result = reconcile(
+        plan, raw_result, validation_result, load_result
+    )
+    publish_coverage(plan, raw_result, reconciliation_result)
 
 
 industrial_energy_bounded_batch()

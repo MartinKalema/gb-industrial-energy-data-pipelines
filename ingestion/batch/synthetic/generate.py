@@ -23,13 +23,21 @@ from zoneinfo import ZoneInfo
 
 
 GENERATOR_NAME = "industrial-energy-lakehouse-synthetic-source-generator"
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 SCHEMA_VERSION = "1.0.0"
 LONDON = ZoneInfo("Europe/London")
 UTC = timezone.utc
 HALF_HOUR = timedelta(minutes=30)
 SIX_PLACES = Decimal("0.000001")
 DECIMAL_PATTERN = re.compile(r"^-?\d+\.\d{6}$")
+
+# The synthetic source represents one continuous fictional timeline.  These
+# anchors deliberately match the original reference evidence, so fixing range
+# composition does not change that known-good source bundle.
+SYNTHETIC_TIMELINE_START_LOCAL_DATE = date(2026, 8, 26)
+SYNTHETIC_TIMELINE_START_UTC = datetime(2026, 8, 25, 23, 0, tzinfo=UTC)
+SYNTHETIC_HISTORY_BOUNDARY_UTC = datetime(2026, 8, 26, 11, 0, tzinfo=UTC)
+SYNTHETIC_PROJECT_SEED = 20260828
 
 DATASET_FILES = {
     "customer_master": "customer_master.jsonl",
@@ -141,6 +149,38 @@ def time_token(value: datetime) -> str:
 def stable_int(seed: int, label: str, modulo: int) -> int:
     digest = hashlib.sha256(f"{seed}:{label}".encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") % modulo
+
+
+def synthetic_timeline_index(value: datetime) -> int:
+    """Return the stable half-hour position of a UTC boundary in the timeline."""
+
+    if value.tzinfo is None:
+        raise ValueError("timeline timestamps must be timezone-aware")
+    difference = value.astimezone(UTC) - SYNTHETIC_TIMELINE_START_UTC
+    half_hours, remainder = divmod(int(difference.total_seconds()), 1800)
+    if remainder:
+        raise ValueError("timeline timestamps must fall on a UTC half-hour boundary")
+    return half_hours
+
+
+def synthetic_interval_at(start_utc: datetime) -> Interval:
+    """Build the range-independent interval metadata for one UTC half-hour."""
+
+    start_utc = start_utc.astimezone(UTC)
+    local_date = start_utc.astimezone(LONDON).date()
+    local_midnight_utc = datetime.combine(local_date, time.min, tzinfo=LONDON).astimezone(
+        UTC
+    )
+    local_period_number = synthetic_timeline_index(start_utc) - synthetic_timeline_index(
+        local_midnight_utc
+    ) + 1
+    return Interval(
+        index=synthetic_timeline_index(start_utc),
+        start_utc=start_utc,
+        end_utc=start_utc + HALF_HOUR,
+        local_date=local_date,
+        local_period_number=local_period_number,
+    )
 
 
 def intervals_for_local_dates(start_date: date, end_date: date) -> list[Interval]:
@@ -602,25 +642,37 @@ def contract_records(window_start: datetime, history_boundary: datetime) -> list
     ]
 
 
-def delivery_quantities(intervals: list[Interval], seed: int) -> dict[str, list[Decimal]]:
-    values: dict[str, list[Decimal]] = {}
-    for entity in ENTITIES:
-        quantities: list[Decimal] = []
-        for interval in intervals:
-            jitter = Decimal(stable_int(seed, f"{entity.delivery_point_id}:{interval.index}", 5)) / Decimal("100")
-            quantities.append(entity.base_commitment + jitter)
-        values[entity.delivery_point_id] = quantities
+def delivery_quantity(entity: Entity, interval: Interval, seed: int) -> Decimal:
+    """Return a delivery determined only by entity, event time, and source seed."""
 
-    first = values[ENTITIES[0].delivery_point_id]
-    first[2] = Decimal("4.700000")  # explicit shortfall
-    first[3] = Decimal("5.600000")  # approved extra, plus unbilled excess
-    first[4] = Decimal("5.100000")  # second explicit line of a multi-interval order
-    first[5] = Decimal("0.000000")  # approved-maintenance no-commitment interval
-    first[6] = Decimal("4.900000")  # commitment record deliberately absent
-    first[8] = Decimal("4.900000")  # left side of shared-boundary correction
-    first[9] = Decimal("5.100000")  # right side of shared-boundary correction
-    first[10] = Decimal("5.200000")  # retroactive commitment correction
-    return values
+    timeline_index = synthetic_timeline_index(interval.start_utc)
+    jitter = Decimal(
+        stable_int(seed, f"{entity.delivery_point_id}:{timeline_index}", 5)
+    ) / Decimal("100")
+    quantity = entity.base_commitment + jitter
+
+    if entity.delivery_point_id == "DP-001":
+        scenario_quantities = {
+            3: Decimal("4.700000"),  # explicit shortfall
+            4: Decimal("5.600000"),  # approved extra, plus unbilled excess
+            5: Decimal("5.100000"),  # second line of a multi-interval order
+            6: Decimal("0.000000"),  # approved-maintenance no commitment
+            7: Decimal("4.900000"),  # commitment record deliberately absent
+            9: Decimal("4.900000"),  # left side of shared-boundary correction
+            10: Decimal("5.100000"),  # right side of shared-boundary correction
+            11: Decimal("5.200000"),  # retroactive commitment correction
+        }
+        quantity = scenario_quantities.get(interval.local_period_number, quantity)
+    return quantity
+
+
+def delivery_quantities(intervals: list[Interval], seed: int) -> dict[str, list[Decimal]]:
+    return {
+        entity.delivery_point_id: [
+            delivery_quantity(entity, interval, seed) for interval in intervals
+        ]
+        for entity in ENTITIES
+    }
 
 
 def commitment_records(intervals: list[Interval]) -> list[dict[str, Any]]:
@@ -672,11 +724,17 @@ def commitment_records(intervals: list[Interval]) -> list[dict[str, Any]]:
 
     for entity in ENTITIES:
         for interval in intervals:
-            if entity.delivery_point_id == "DP-001" and interval.index == 6:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 7
+            ):
                 continue  # absence is intentionally unknown, not zero
 
             initial_publication = interval.start_utc - timedelta(days=2)
-            if entity.delivery_point_id == "DP-001" and interval.index == 5:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 6
+            ):
                 records.append(
                     make_record(
                         entity,
@@ -714,7 +772,10 @@ def commitment_records(intervals: list[Interval]) -> list[dict[str, Any]]:
                     initial_publication,
                 )
             )
-            if entity.delivery_point_id == "DP-001" and interval.index == 10:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 11
+            ):
                 records.append(
                     make_record(
                         entity,
@@ -735,6 +796,12 @@ def commitment_records(intervals: list[Interval]) -> list[dict[str, Any]]:
 def excess_order_records(intervals: list[Interval]) -> list[dict[str, Any]]:
     first = ENTITIES[0]
     records: list[dict[str, Any]] = []
+
+    def order_id(sequence: int, local_date: date) -> str:
+        base = f"EXCESS-ORDER-{sequence:03d}"
+        if local_date == SYNTHETIC_TIMELINE_START_LOCAL_DATE:
+            return base
+        return f"{base}-{local_date:%Y%m%d}"
 
     def make_record(
         *,
@@ -776,73 +843,103 @@ def excess_order_records(intervals: list[Interval]) -> list[dict[str, Any]]:
             ),
         }
 
-    for line_number, (index, quantity) in enumerate(
-        ((3, Decimal("0.400000")), (4, Decimal("0.200000"))), start=1
-    ):
-        interval = intervals[index]
+    intervals_by_date: dict[date, dict[int, Interval]] = {}
+    for interval in intervals:
+        intervals_by_date.setdefault(interval.local_date, {})[
+            interval.local_period_number
+        ] = interval
+
+    for local_date, local_intervals in sorted(intervals_by_date.items()):
+        approved_order_id = order_id(1, local_date)
+        for line_number, (period_number, quantity) in enumerate(
+            ((4, Decimal("0.400000")), (5, Decimal("0.200000"))), start=1
+        ):
+            interval = local_intervals[period_number]
+            records.append(
+                make_record(
+                    order_id=approved_order_id,
+                    line_id=f"{approved_order_id}-L{line_number:02d}",
+                    interval=interval,
+                    revision=1,
+                    order_state="approved",
+                    quantity=quantity,
+                    revision_type="original",
+                    published_at=interval.start_utc - timedelta(days=1),
+                )
+            )
+
+        canceled_order_id = order_id(2, local_date)
+        canceled_interval = local_intervals[13]
         records.append(
             make_record(
-                order_id="EXCESS-ORDER-001",
-                line_id=f"EXCESS-ORDER-001-L{line_number:02d}",
-                interval=interval,
+                order_id=canceled_order_id,
+                line_id=f"{canceled_order_id}-L01",
+                interval=canceled_interval,
                 revision=1,
                 order_state="approved",
-                quantity=quantity,
+                quantity=Decimal("0.300000"),
                 revision_type="original",
-                published_at=interval.start_utc - timedelta(days=1),
+                published_at=canceled_interval.start_utc - timedelta(days=2),
             )
         )
-
-    canceled_interval = intervals[12]
-    records.append(
-        make_record(
-            order_id="EXCESS-ORDER-002",
-            line_id="EXCESS-ORDER-002-L01",
-            interval=canceled_interval,
-            revision=1,
-            order_state="approved",
-            quantity=Decimal("0.300000"),
-            revision_type="original",
-            published_at=canceled_interval.start_utc - timedelta(days=2),
+        records.append(
+            make_record(
+                order_id=canceled_order_id,
+                line_id=f"{canceled_order_id}-L01",
+                interval=canceled_interval,
+                revision=2,
+                order_state="cancelled",
+                quantity=Decimal("0"),
+                revision_type="cancellation",
+                published_at=canceled_interval.start_utc - timedelta(days=1),
+                supersedes=1,
+                reason="customer_cancellation",
+            )
         )
-    )
-    records.append(
-        make_record(
-            order_id="EXCESS-ORDER-002",
-            line_id="EXCESS-ORDER-002-L01",
-            interval=canceled_interval,
-            revision=2,
-            order_state="cancelled",
-            quantity=Decimal("0"),
-            revision_type="cancellation",
-            published_at=canceled_interval.start_utc - timedelta(days=1),
-            supersedes=1,
-            reason="customer_cancellation",
-        )
-    )
     return records
+
+
+def meter_value_at(
+    boundary_utc: datetime, entity_number: int, entity: Entity, seed: int
+) -> Decimal:
+    """Return the continuous cumulative register value at one UTC boundary."""
+
+    boundary_utc = boundary_utc.astimezone(UTC)
+    if boundary_utc < SYNTHETIC_TIMELINE_START_UTC:
+        raise ValueError(
+            "cumulative meter evidence is unavailable before the synthetic timeline starts"
+        )
+    value = (
+        Decimal("2000.000000") if entity_number == 1 else Decimal("3500.000000")
+    ) + Decimal(stable_int(seed, f"start:{entity.meter_id}", 50))
+    cursor = SYNTHETIC_TIMELINE_START_UTC
+    while cursor < boundary_utc:
+        value += delivery_quantity(entity, synthetic_interval_at(cursor), seed)
+        cursor += HALF_HOUR
+    return value
 
 
 def meter_reading_records(
     intervals: list[Interval], deliveries: dict[str, list[Decimal]], seed: int
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    shared_boundary_index = 9  # boundary after interval index 8 and before index 9
 
     for entity_number, entity in enumerate(ENTITIES, start=1):
-        starting_value = (
-            Decimal("2000.000000") if entity_number == 1 else Decimal("3500.000000")
-        ) + Decimal(stable_int(seed, f"start:{entity.meter_id}", 50))
+        starting_value = meter_value_at(
+            intervals[0].start_utc, entity_number, entity, seed
+        )
         cumulative_values = [starting_value]
         for quantity in deliveries[entity.delivery_point_id]:
             cumulative_values.append(cumulative_values[-1] + quantity)
 
         boundaries = [intervals[0].start_utc] + [item.end_utc for item in intervals]
-        for boundary_index, (boundary, current_value) in enumerate(
-            zip(boundaries, cumulative_values, strict=True)
-        ):
+        for boundary, current_value in zip(boundaries, cumulative_values, strict=True):
             revisions = [(1, current_value, "initial")]
-            if entity.delivery_point_id == "DP-001" and boundary_index == shared_boundary_index:
+            preceding_interval = synthetic_interval_at(boundary - HALF_HOUR)
+            if (
+                entity.delivery_point_id == "DP-001"
+                and preceding_interval.local_period_number == 9
+            ):
                 revisions = [
                     (1, current_value - Decimal("0.200000"), "initial"),
                     (2, current_value, "correction"),
@@ -950,10 +1047,16 @@ def capacity_records(intervals: list[Interval]) -> list[dict[str, Any]]:
 
     for entity in ENTITIES:
         for interval in intervals:
-            if entity.delivery_point_id == "DP-001" and interval.index == 15:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 16
+            ):
                 continue  # no assessment: deliberately unknown rather than zero
 
-            if entity.delivery_point_id == "DP-001" and interval.index == 12:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 13
+            ):
                 records.extend(
                     [
                         make_record(
@@ -993,7 +1096,10 @@ def capacity_records(intervals: list[Interval]) -> list[dict[str, Any]]:
                 )
                 continue
 
-            if entity.delivery_point_id == "DP-001" and interval.index == 13:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 14
+            ):
                 records.append(
                     make_record(
                         entity=entity,
@@ -1010,10 +1116,16 @@ def capacity_records(intervals: list[Interval]) -> list[dict[str, Any]]:
 
             restriction = Decimal("0.500000")
             reason_code = "normal"
-            if entity.delivery_point_id == "DP-001" and interval.index == 14:
+            if (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 15
+            ):
                 restriction = entity.nameplate_ceiling
                 reason_code = "unavailable"
-            elif entity.delivery_point_id == "DP-001" and interval.index == 16:
+            elif (
+                entity.delivery_point_id == "DP-001"
+                and interval.local_period_number == 17
+            ):
                 restriction = Decimal("3.000000")
                 reason_code = "planned_restriction"
 
@@ -1073,21 +1185,36 @@ def build_bundle(
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     if seed < 0:
         raise ValueError("seed must be a non-negative integer")
+    if start_date < SYNTHETIC_TIMELINE_START_LOCAL_DATE:
+        raise ValueError(
+            "synthetic source timeline starts on "
+            f"{SYNTHETIC_TIMELINE_START_LOCAL_DATE.isoformat()}"
+        )
     intervals = intervals_for_local_dates(start_date, end_date)
     window_start = intervals[0].start_utc
     window_end = intervals[-1].end_utc
     if generation_time_utc.tzinfo is None:
         raise ValueError("generation_time_utc must be timezone-aware")
     generation_time_utc = generation_time_utc.astimezone(UTC)
-    history_boundary = intervals[len(intervals) // 2].start_utc
+    history_boundary = SYNTHETIC_HISTORY_BOUNDARY_UTC
     deliveries = delivery_quantities(intervals, seed)
 
     records = {
-        "customer_master": customer_records(window_start, history_boundary),
-        "industrial_site_master": site_records(window_start, history_boundary),
-        "delivery_point_assignment": delivery_point_assignment_records(window_start),
-        "revenue_meter_assignment": revenue_meter_assignment_records(window_start),
-        "contract_terms": contract_records(window_start, history_boundary),
+        "customer_master": customer_records(
+            SYNTHETIC_TIMELINE_START_UTC, history_boundary
+        ),
+        "industrial_site_master": site_records(
+            SYNTHETIC_TIMELINE_START_UTC, history_boundary
+        ),
+        "delivery_point_assignment": delivery_point_assignment_records(
+            SYNTHETIC_TIMELINE_START_UTC
+        ),
+        "revenue_meter_assignment": revenue_meter_assignment_records(
+            SYNTHETIC_TIMELINE_START_UTC
+        ),
+        "contract_terms": contract_records(
+            SYNTHETIC_TIMELINE_START_UTC, history_boundary
+        ),
         "commitment_schedule": commitment_records(intervals),
         "approved_excess_order": excess_order_records(intervals),
         "revenue_meter_reading": meter_reading_records(intervals, deliveries, seed),
@@ -1356,7 +1483,7 @@ def run_self_check() -> dict[str, Any]:
 
     fixed_generation_time = datetime(2026, 12, 31, tzinfo=UTC)
     records, manifest_context = build_bundle(
-        date(2026, 3, 29), date(2026, 3, 29), 20260828, fixed_generation_time
+        date(2026, 10, 25), date(2026, 10, 25), 20260828, fixed_generation_time
     )
     if set(records) != set(DATASET_FILES):
         raise AssertionError("the bundle does not contain exactly the nine accepted synthetic sources")

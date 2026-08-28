@@ -10,6 +10,7 @@ from ingestion.batch.pipeline.models import (
     RunPlan,
     build_run_plan,
 )
+from ingestion.batch.synthetic.generate import GENERATOR_VERSION, SYNTHETIC_PROJECT_SEED
 from tests.pipeline.fakes import FakeObjectStore
 
 
@@ -25,7 +26,7 @@ def test_run_plan_is_deterministic_and_contains_no_credentials(tmp_path: Path) -
     first = build_run_plan(
         start_date="2026-08-27",
         end_date="2026-08-28",
-        seed=17,
+        seed=SYNTHETIC_PROJECT_SEED,
         generation_time_utc="2026-08-31T12:00:00Z",
         orchestrator_run_id="manual__one",
         environment=environment(tmp_path),
@@ -33,13 +34,14 @@ def test_run_plan_is_deterministic_and_contains_no_credentials(tmp_path: Path) -
     second = build_run_plan(
         start_date="2026-08-27",
         end_date="2026-08-28",
-        seed=17,
+        seed=SYNTHETIC_PROJECT_SEED,
         generation_time_utc="2026-08-31T12:00:00+00:00",
         orchestrator_run_id="manual__two",
         environment=environment(tmp_path),
     )
     assert first.pipeline_run_id == second.pipeline_run_id
     assert first.generation_time_utc == "2026-08-31T12:00:00Z"
+    assert first.generator_version == GENERATOR_VERSION
     assert first.orchestrator_run_id != second.orchestrator_run_id
     serialized = first.to_dict()
     assert not any("secret" in key.lower() or "token" in key.lower() for key in serialized)
@@ -49,10 +51,42 @@ def test_run_plan_is_deterministic_and_contains_no_credentials(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("start_date", "end_date", "seed", "generation_time", "message"),
     [
-        ("2026-08-28", "2026-08-27", 1, "2026-09-01T00:00:00Z", "on or after"),
-        ("2026-01-01", "2026-02-02", 1, "2026-03-01T00:00:00Z", "31-day"),
+        (
+            "2026-08-28",
+            "2026-08-27",
+            SYNTHETIC_PROJECT_SEED,
+            "2026-09-01T00:00:00Z",
+            "on or after",
+        ),
+        (
+            "2026-01-01",
+            "2026-02-02",
+            SYNTHETIC_PROJECT_SEED,
+            "2026-03-01T00:00:00Z",
+            "31-day",
+        ),
+        (
+            "2026-08-25",
+            "2026-08-25",
+            SYNTHETIC_PROJECT_SEED,
+            "2026-09-01T00:00:00Z",
+            "timeline start",
+        ),
         ("2026-08-27", "2026-08-27", -1, "2026-09-01T00:00:00Z", "non-negative"),
-        ("2026-08-27", "2026-08-27", 1, "2026-09-01T03:00:00+03:00", "Z or"),
+        (
+            "2026-08-27",
+            "2026-08-27",
+            1,
+            "2026-09-01T00:00:00Z",
+            "fixed synthetic project seed",
+        ),
+        (
+            "2026-08-27",
+            "2026-08-27",
+            SYNTHETIC_PROJECT_SEED,
+            "2026-09-01T03:00:00+03:00",
+            "Z or",
+        ),
     ],
 )
 def test_run_plan_rejects_unbounded_or_ambiguous_inputs(
@@ -90,7 +124,7 @@ def test_run_plan_rejects_unsafe_storage_names(
         build_run_plan(
             start_date="2026-08-27",
             end_date="2026-08-27",
-            seed=1,
+            seed=SYNTHETIC_PROJECT_SEED,
             generation_time_utc="2026-09-01T00:00:00Z",
             orchestrator_run_id="manual__invalid-name",
             environment=configured,

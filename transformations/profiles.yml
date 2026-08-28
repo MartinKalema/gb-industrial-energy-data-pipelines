@@ -1,0 +1,18 @@
+gb_industrial_energy:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: "{{ env_var('DBT_TRINO_USER', 'dbt') }}"
+      host: "{{ env_var('DBT_TRINO_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('DBT_TRINO_PORT', '8080') | int }}"
+      database: "{{ env_var('DBT_TRINO_CATALOG', 'r2') }}"
+      schema: "{{ env_var('DBT_TRINO_SCHEMA', 'industrial_energy') }}"
+      http_scheme: http
+      # Keep catalog operations serial against the local R2 Data Catalog beta.
+      # The history build is planning-heavy, and correctness is preferred over
+      # concurrent metadata bursts for this bounded development project.
+      threads: 1
+      retries: 3
+      timezone: UTC

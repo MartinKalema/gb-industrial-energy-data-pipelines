@@ -4,7 +4,8 @@ This area contains finite, idempotent source jobs that Airflow invokes. The
 bounded Phase 2 path now generates the nine accepted fictional private sources,
 lands their exact bytes and evidence envelopes in Cloudflare R2, validates and
 quarantines records, loads accepted revisions into typed Iceberg tables through
-Trino, and reconciles every input row.
+Trino, reconciles every input row, and publishes successful operating-date
+coverage for dbt.
 
 In simple terms: we first keep what the source actually said, then decide which
 rows are safe to query. Bad rows are preserved with an explanation; they are
@@ -40,6 +41,8 @@ The manual `industrial_energy_bounded_batch` DAG performs these stages:
 6. Load accepted records in bounded chunks into one typed Iceberg table per
    source dataset through local Trino.
 7. Reconcile raw, accepted, quarantine, duplicate, inserted, and reused counts.
+8. Publish one idempotent successful-run row to the Iceberg coverage control
+   table so dbt can construct every expected local-date interval.
 
 The exact run contract, R2 prefixes, lineage columns, retry rules, and recovery
 procedures are in the

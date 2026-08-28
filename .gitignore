@@ -17,6 +17,7 @@ logs/
 data/
 tmp/
 .dbt/
+.user.yml
 transformations/target/
 transformations/logs/
 secrets/

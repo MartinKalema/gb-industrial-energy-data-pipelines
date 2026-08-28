@@ -11,6 +11,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from ingestion.batch.synthetic.generate import (
+    GENERATOR_VERSION,
+    SYNTHETIC_PROJECT_SEED,
+    SYNTHETIC_TIMELINE_START_LOCAL_DATE,
+)
+
 
 UTC = timezone.utc
 DEFAULT_MAX_BATCH_DAYS = 31
@@ -66,6 +72,7 @@ class RunPlan:
     end_date: str
     seed: int
     generation_time_utc: str
+    generator_version: str
     work_dir: str
     raw_bucket: str
     raw_prefix: str
@@ -86,6 +93,7 @@ class RunPlan:
                 end_date=str(value["end_date"]),
                 seed=int(value["seed"]),
                 generation_time_utc=str(value["generation_time_utc"]),
+                generator_version=str(value["generator_version"]),
                 work_dir=str(value["work_dir"]),
                 raw_bucket=str(value["raw_bucket"]),
                 raw_prefix=str(value["raw_prefix"]),
@@ -108,8 +116,21 @@ class RunPlan:
             raise PipelineError(
                 f"requested {day_count} local dates exceeds the {max_batch_days}-day bound"
             )
+        if start < SYNTHETIC_TIMELINE_START_LOCAL_DATE:
+            raise PipelineError(
+                "start_date precedes the synthetic source timeline start "
+                f"{SYNTHETIC_TIMELINE_START_LOCAL_DATE.isoformat()}"
+            )
         if self.seed < 0:
             raise PipelineError("seed must be a non-negative integer")
+        if self.seed != SYNTHETIC_PROJECT_SEED:
+            raise PipelineError(
+                f"seed must equal the fixed synthetic project seed {SYNTHETIC_PROJECT_SEED}"
+            )
+        if self.generator_version != GENERATOR_VERSION:
+            raise PipelineError(
+                f"generator_version must equal the active version {GENERATOR_VERSION}"
+            )
         parse_utc_timestamp(self.generation_time_utc, "generation_time_utc")
         if not SAFE_RUN_IDENTIFIER.fullmatch(self.pipeline_run_id):
             raise PipelineError("pipeline_run_id contains unsupported characters")
@@ -154,6 +175,7 @@ def build_run_plan(
     identity_payload = {
         "end_date": end.isoformat(),
         "generation_time_utc": generated_at,
+        "generator_version": GENERATOR_VERSION,
         "seed": int(seed),
         "start_date": start.isoformat(),
     }
@@ -174,6 +196,7 @@ def build_run_plan(
         end_date=end.isoformat(),
         seed=int(seed),
         generation_time_utc=generated_at,
+        generator_version=GENERATOR_VERSION,
         work_dir=str((work_root / pipeline_run_id).resolve()),
         raw_bucket=require_environment("R2_RAW_BUCKET", environment),
         raw_prefix=environment.get("R2_PIPELINE_PREFIX", "industrial-energy").strip("/"),

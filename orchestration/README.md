@@ -17,7 +17,8 @@ Long-running IRIS, Redpanda, and Spark consumers run as supervised services. Air
 `industrial_energy_bounded_batch` is the first implemented DAG. In simple
 English, one manual run takes a small period of fictional industrial-energy
 source data from generation to durable raw evidence, validation/quarantine,
-typed Iceberg source tables, and final count reconciliation.
+typed Iceberg source tables, final count reconciliation, and a queryable
+successful-run coverage declaration.
 
 The task order is:
 
@@ -28,10 +29,19 @@ plan_run
   -> validate_and_quarantine
   -> load_validated_rows_to_iceberg
   -> reconcile_evidence_counts
+  -> publish_batch_run_coverage
 ```
 
 Each task exchanges only a small JSON summary through XCom. Records and bulk
 files do not pass through the Airflow metadata database.
+
+The final task writes exactly one row per canonical pipeline run to
+`r2.industrial_energy_control.batch_run_coverage`, and only runs after count
+reconciliation succeeds. This technical timetable is what lets dbt build
+expected half-hour rows even when all business evidence for an interval is
+missing. Exact Airflow replays reuse the row and retain its first successful
+attempt lineage; a changed stable payload under the same run identity is
+rejected.
 
 The DAG has no schedule, permits one active run, and retries each failed task
 once after one minute. Each task has a 20-minute timeout and the whole run has
@@ -39,11 +49,27 @@ a 45-minute timeout. Its parameters are:
 
 - `start_date`: first operating date, inclusive;
 - `end_date`: last operating date, inclusive and no earlier than the start;
-- `seed`: non-negative deterministic generator seed; and
+- `seed`: fixed project seed `20260828`; and
 - `generation_time_utc`: fixed UTC timestamp ending in `Z`.
 
 The normal maximum is 31 inclusive days. The run planner checks this again in
 Python, so a direct API trigger cannot bypass the bound enforced by the UI.
+
+It is manual because it is the controlled learning/backfill workflow: the
+operator chooses which fictional operating dates should exist. Triggering a
+run does not automatically mean new business data. Reusing all four inputs
+under the same generator version is an exact replay; changing only the
+generation timestamp creates a new evidence run around the same source rows;
+choosing later dates with the fixed
+`20260828` project seed appends new interval evidence. Changing the seed for an
+Airflow run is rejected because it would create a discontinuous meter timeline.
+
+The generator now represents one continuous synthetic timeline beginning on
+the `2026-08-26` Europe/London operating date. Daily ranges and combined
+backfills compose to the same rows, including the shared cumulative-meter
+boundary. If recurring growth is accepted later, add a separate daily DAG that
+derives a completed operating date from its Airflow data interval and calls the
+same workflow; keep this DAG manual for replays and backfills.
 
 Iceberg does not enforce a unique source-revision identity. This DAG's
 `max_active_runs=1` setting serializes its runs, and the load task uses the

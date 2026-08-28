@@ -1,0 +1,274 @@
+version: 2
+
+models:
+  - name: dim_customer
+    description: >-
+      One row per effective customer version, retaining its latest approved source
+      revision even when terminal. Use version_record_status for source-record
+      state; is_current means the effective window is open, not that the record is active.
+    columns:
+      - name: customer_key
+        data_tests: [not_null, unique]
+
+  - name: dim_site
+    description: >-
+      One row per effective industrial-site version, retaining its latest approved
+      revision and explicit version_record_status. This stable key is for current
+      grouping; use dim_site_revision_audit for as-known descriptions.
+    columns:
+      - name: site_key
+        data_tests: [not_null, unique]
+
+  - name: dim_delivery_point
+    description: >-
+      One row per effective delivery-point assignment episode, retaining the latest
+      approved revision and assignment_status, including cancelled episodes.
+    columns:
+      - name: delivery_point_key
+        data_tests: [not_null, unique]
+
+  - name: dim_contract
+    description: >-
+      One row per effective contract-terms version with its latest approved exact
+      rates, terms_status, and source lineage. Historical descriptive queries use
+      dim_contract_revision_audit rather than these corrected-latest attributes.
+    columns:
+      - name: contract_key
+        data_tests: [not_null, unique]
+
+  - name: dim_meter
+    description: >-
+      One row per authoritative revenue-meter assignment episode and register,
+      retaining assignment_status even when the episode is later cancelled.
+    columns:
+      - name: meter_key
+        data_tests: [not_null, unique]
+
+  - name: dim_date
+    description: >-
+      Operating-date attributes plus the expected half-hour count derived from
+      real timezone boundaries, including 46- and 50-period daylight-saving days.
+    columns:
+      - name: date_key
+        data_tests: [not_null, unique]
+
+  - name: dim_interval
+    description: One row per real UTC half-hour with local clock, period, offset, and daylight-saving attributes.
+    columns:
+      - name: interval_key
+        data_tests: [not_null, unique]
+
+  - name: dim_data_status
+    description: >-
+      Distinct current and historical completeness/finality combinations. Phase 2
+      accepted Iceberg rows can identify accepted, missing, withdrawn, provisional,
+      and corrected analytical states, but cannot attribute an individual missing
+      event to quarantine rather than never-received evidence. No quarantine flag
+      in this dimension should be inferred from batch-level quarantine counts.
+    columns:
+      - name: data_status_key
+        data_tests: [not_null, unique]
+
+  - name: dim_customer_revision_audit
+    description: One row per customer revision that became authoritative, with its half-open source-knowledge window and as-known attributes.
+    columns:
+      - name: customer_revision_key
+        data_tests: [not_null, unique]
+
+  - name: dim_site_revision_audit
+    description: One row per site revision that became authoritative, with its half-open source-knowledge window and as-known attributes.
+    columns:
+      - name: site_revision_key
+        data_tests: [not_null, unique]
+
+  - name: dim_delivery_point_revision_audit
+    description: One row per delivery-point assignment revision that became authoritative, including terminal states and knowledge windows.
+    columns:
+      - name: delivery_point_revision_key
+        data_tests: [not_null, unique]
+
+  - name: dim_contract_revision_audit
+    description: One row per contract revision that became authoritative, preserving the exact rate attributes known during its source-knowledge window.
+    columns:
+      - name: contract_revision_key
+        data_tests: [not_null, unique]
+
+  - name: dim_meter_revision_audit
+    description: One row per meter-assignment revision that became authoritative, with its as-known register and plausibility attributes.
+    columns:
+      - name: meter_revision_key
+        data_tests: [not_null, unique]
+
+  - name: fct_steam_delivery_interval
+    description: >-
+      Current authoritative reconciliation at one delivery point and one real UTC
+      half-hour. The table is rebuilt in full and intentionally unpartitioned for
+      the bounded Phase 2 slice.
+    columns:
+      - name: delivery_interval_key
+        data_tests: [not_null, unique]
+      - name: date_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: interval_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_interval')
+                field: interval_key
+      - name: delivery_point_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_delivery_point')
+                field: delivery_point_key
+      - name: customer_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_key
+      - name: site_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+      - name: contract_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_contract')
+                field: contract_key
+      - name: meter_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_meter')
+                field: meter_key
+      - name: data_status_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_data_status')
+                field: data_status_key
+      - name: delivery_measurement_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [accepted, meter_assignment_missing, boundary_missing, boundary_withdrawn, non_actual_reading, unit_mismatch, negative_delta, implausible_delta]
+      - name: commitment_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [committed, no_commitment, missing, withdrawn]
+      - name: capacity_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [final, provisional, withdrawn, missing]
+
+  - name: fct_steam_delivery_interval_history
+    description: >-
+      Source-knowledge history at delivery interval plus known_from_utc grain.
+      Windows use max(source publication, source approval), are half-open, exclude
+      late lower revisions, and retain terminal cancellation/withdrawal states so
+      an older active version cannot regain authority. This is source-knowledge
+      history, not platform ingestion-time or Iceberg snapshot history.
+      Stable customer/site/delivery-point/contract/meter keys support cross-window
+      grouping but point to latest corrected dimensions; the five revision keys
+      must be used when reproducing descriptive context at a historical cutoff.
+    columns:
+      - name: delivery_interval_history_key
+        data_tests: [not_null, unique]
+      - name: delivery_interval_key
+        data_tests: [not_null]
+      - name: known_from_utc
+        data_tests: [not_null]
+      - name: result_state_sha256
+        data_tests: [not_null]
+      - name: date_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: interval_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_interval')
+                field: interval_key
+      - name: delivery_point_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_delivery_point')
+                field: delivery_point_key
+      - name: customer_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_key
+      - name: site_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_site')
+                field: site_key
+      - name: contract_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_contract')
+                field: contract_key
+      - name: meter_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_meter')
+                field: meter_key
+      - name: data_status_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_data_status')
+                field: data_status_key
+      - name: customer_revision_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer_revision_audit')
+                field: customer_revision_key
+      - name: site_revision_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_site_revision_audit')
+                field: site_revision_key
+      - name: delivery_point_revision_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_delivery_point_revision_audit')
+                field: delivery_point_revision_key
+      - name: contract_revision_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_contract_revision_audit')
+                field: contract_revision_key
+      - name: meter_revision_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_meter_revision_audit')
+                field: meter_revision_key

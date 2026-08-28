@@ -22,6 +22,15 @@ Trino 478. These conservative versions align with Cloudflare's published Spark
 example and the Trino version tested by the selected dbt-trino release. An
 upgrade is a separate measured change after the catalog test is green.
 
+The single-node Trino configuration raises `query.max-stage-count` from its
+default 150 to 400. The accepted dbt baseline keeps reusable intermediate
+relations as views, and the current source-knowledge history expands to 288
+stages during a full build. The higher ceiling is scoped to this isolated local
+engine; it is not a production scaling recommendation and must be revisited if
+data size, concurrency, or engine topology grows. Trino documents both the
+default and the cluster-stability warning in its
+[query-management properties](https://trino.io/docs/current/admin/properties-query-management.html#query-max-stage-count).
+
 Run the cross-engine catalog smoke test from the repository root:
 
 ```bash

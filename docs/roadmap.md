@@ -65,6 +65,16 @@ source tables, and reconciles raw-to-Iceberg counts. The real first run inserted
 replay reused every R2 artifact and all 313 Iceberg identities without an
 insert or conflict.
 
+**Dimensional-mart milestone:** implemented and live-verified on 2026-08-28.
+The full-rebuild dbt project preserves all source revisions in staging, applies
+current and source-knowledge revision precedence, builds eight logical
+dimensions plus five revision-audit companions, and publishes 96 current
+delivery-point/half-hour facts and 582 historical knowledge windows for the
+one-day verification slice. The accepted reconciliation, shared meter-boundary,
+missing-versus-zero, capacity-precedence, event-time relationship, grain,
+lineage, and key rules are executable tests. Incremental processing remains a
+measurement-driven later optimization.
+
 - Resolve and record the Phase 2 source-contract entry decisions for deliverable
   capacity, shared-capacity allocation, commitment/contract revisions, and
   approved excess orders.
@@ -86,6 +96,8 @@ The executable handoff is in the
 [Phase 2 source implementation](architecture/phase-2-source-implementation.md).
 The implemented batch boundary is described in the
 [bounded Airflow-to-R2-and-Iceberg runbook](architecture/bounded-airflow-r2-iceberg-pipeline.md).
+The implemented analytical boundary is described in the
+[steam-delivery dbt dimensional-mart runbook](architecture/steam-delivery-dbt-dimensional-mart.md).
 
 ## Phase 3 — streaming vertical slice
 

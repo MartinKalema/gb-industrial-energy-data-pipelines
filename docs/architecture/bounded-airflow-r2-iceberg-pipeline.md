@@ -55,14 +55,15 @@ and has no schedule. Each run receives four explicit parameters:
 |---|---|---|
 | `start_date` | First operating date, inclusive, in `YYYY-MM-DD` form | Defines the first day generated |
 | `end_date` | Last operating date, inclusive, on or after `start_date` | Makes the end of the request unambiguous |
-| `seed` | Non-negative integer | Makes synthetic source values reproducible |
+| `seed` | Fixed integer `20260828` | Identifies the one continuous project timeline |
 | `generation_time_utc` | Fixed RFC 3339 UTC timestamp ending in `Z` | Makes evidence timestamps and retry output reproducible |
 
 The default maximum is 31 inclusive dates. `PIPELINE_MAX_BATCH_DAYS` can change
 the limit for an intentional experiment, but the normal local contract remains
 31 days. The run planner rejects a reversed range, an oversized range, a
-negative seed, a non-UTC generation time, unsafe catalog/schema identifiers,
-or a relative working directory.
+date before the continuous synthetic timeline, any seed other than the fixed
+project seed, a non-UTC generation time, unsafe catalog/schema identifiers, or
+a relative working directory.
 
 Airflow permits only one active run of this DAG. Each task receives one retry
 after one minute, a 20-minute execution timeout, and the whole DAG run has a
@@ -71,16 +72,58 @@ identifiers, paths, counts, hashes, and object locations; source records move
 through R2 and the run-scoped Airflow work volume, not through the metadata
 database.
 
-The pipeline identity is deterministic for the combination of start date, end
-date, seed, and generation timestamp:
+The pipeline identity is deterministic for the combination of generator
+version, start date, end date, seed, and generation timestamp:
 
 ```text
-batch-<YYYYMMDD>-<YYYYMMDD>-<first 16 characters of the input SHA-256>
+batch-<YYYYMMDD>-<YYYYMMDD>-<first 16 characters of the versioned input SHA-256>
 ```
 
 The Airflow run ID is recorded separately for orchestration traceability. It is
 not part of the evidence identity, so retrying the same bounded inputs produces
 the same pipeline run ID and object keys.
+
+## Why this DAG is manual
+
+This DAG is a controlled learning, replay, and backfill workflow. A person
+chooses the operating-date range and the evidence-generation timestamp, so a
+run never silently invents a new date merely because the clock advanced. The
+synthetic generator is standing in for future API or database extracts; it is
+not itself a production source feed.
+
+A run is not automatically new business data:
+
+| Run inputs | Business-row outcome |
+|---|---|
+| Same generator version, dates, seed, and generation time | Exact replay: same pipeline identity, R2 objects, and source rows |
+| Same dates and seed, later generation time | New evidence-run identity and manifest; source JSONL rows are unchanged and Iceberg reuses them |
+| New operating dates, fixed project seed | New interval source revisions are appended; stable master rows and the shared cumulative-meter boundary are exact replays |
+| Same dates, different seed | Invalid for this timeline: meter payloads change under existing source identities and the loader rejects the conflict |
+
+The pipeline enforces the fixed project seed `20260828`. Generator version
+`1.1.0` is part of the pipeline identity. The complete continuous timeline
+starts on the `2026-08-26` Europe/London operating date. Generating adjacent
+days separately is guaranteed to produce the same identities and payloads as
+one combined request.
+
+One ordinary one-day bundle contains 313 source revision rows. A following
+ordinary day contributes 295 new source revisions: 16 master/history rows and
+the two shared meter-boundary rows replay exactly. The two-day union therefore
+contains 608 source revisions. After current-revision selection, the mart grain
+is smaller: two delivery points times 48 half-hours gives 96 delivery facts per
+ordinary day.
+
+If regular data growth is wanted later, keep this manual DAG for backfills and
+add a separate daily DAG. That DAG should derive one completed
+`Europe/London` operating date from Airflow's logical data interval, retain the
+fixed seed, and call the same bounded workflow. It should run late enough for
+the deliberately delayed synthetic corrections to have been published.
+
+Growing history does not by itself require dbt incremental models. A full
+rebuild is still correct and is useful as the initial correctness baseline at
+this scale. Incremental materialization becomes worthwhile only when measured
+runtime or scan cost is material; it must then reproduce the full-build result,
+including recalculating both intervals adjacent to a corrected meter boundary.
 
 ## Components and data flow
 
@@ -94,6 +137,7 @@ Airflow on this computer
   6. send bounded SQL statements to local Trino
   7. Trino commits accepted rows to Iceberg tables stored on R2
   8. reconcile counts and write the summary to R2
+  9. publish the successfully reconciled local-date coverage to Iceberg
 
 Remote managed services
   Cloudflare R2 object storage + Cloudflare R2 Data Catalog
@@ -270,9 +314,10 @@ revision so the evidence history remains auditable.
 
 ## Observability and reconciliation
 
-Airflow shows task state, duration, retry count, and logs for the six stages:
-plan, generate, raw landing, validation/quarantine, Iceberg load, and
-reconciliation. Small task summaries include hashes, locations, and counts.
+Airflow shows task state, duration, retry count, and logs for the seven stages:
+plan, generate, raw landing, validation/quarantine, Iceberg load,
+reconciliation, and successful-run coverage publication. Small task summaries
+include hashes, locations, and counts.
 
 The validation report records total and per-dataset accepted, quarantined, and
 exact-replay counts; quarantine-reason counts; accepted row identities/hashes;
@@ -280,7 +325,7 @@ and hashes/counts for every accepted and quarantine output file. Each dataset
 load records input rows, planned new rows, inserted rows, exact replays,
 conflicts, chunks, and warnings.
 
-The final task enforces both equations:
+The reconciliation task enforces both equations:
 
 ```text
 raw records = accepted records + quarantined records + duplicate replay records
@@ -294,6 +339,16 @@ ID, raw, validation, duplicate, insert/reuse, and table counts. The attempt key
 uses a safe SHA-256 prefix of the Airflow run ID. Each summary is the compact
 proof that one execution accounted for every raw row without forcing a first
 insert and a later exact replay to claim the same immutable object key.
+
+Only after that proof succeeds, the final task inserts one row into
+`r2.industrial_energy_control.batch_run_coverage`. The row records the
+inclusive `Europe/London` dates, generator and raw-manifest identity, balanced
+counts, reconciliation status, and first successful attempt artifact. Its
+canonical hash excludes attempt-specific Airflow and reconciliation-artifact
+fields, and represents inserted plus replayed Iceberg rows as one reconciled
+count. Therefore an exact replay reuses the first row, while the same
+`pipeline_run_id` with changed stable coverage content fails as an immutable
+payload conflict.
 
 ## Scale trade-offs and revisit triggers
 

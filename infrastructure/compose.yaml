@@ -14,6 +14,7 @@ services:
     ports:
       - "127.0.0.1:${TRINO_PORT:-8080}:8080"
     volumes:
+      - ./infrastructure/trino/config.properties:/etc/trino/config.properties:ro
       - ./infrastructure/trino/catalog:/etc/trino/catalog:ro
       - ./tests/smoke:/opt/industrial-energy/smoke:ro
     healthcheck:
@@ -49,6 +50,14 @@ services:
       TRINO_URL: http://trino:8080
       TRINO_USER: airflow
       TRINO_QUERY_TIMEOUT_SECONDS: "300"
+      DBT_PROFILES_DIR: /opt/industrial-energy/transformations
+      DBT_LOG_PATH: /opt/airflow/dbt/logs
+      DBT_TARGET_PATH: /opt/airflow/dbt/target
+      DBT_TRINO_HOST: trino
+      DBT_TRINO_PORT: "8080"
+      DBT_TRINO_USER: airflow
+      DBT_TRINO_CATALOG: r2
+      DBT_TRINO_SCHEMA: industrial_energy
       ICEBERG_CATALOG: r2
       ICEBERG_VALIDATED_SCHEMA: industrial_energy_validated
       TRINO_INSERT_BATCH_SIZE: "100"

@@ -23,10 +23,10 @@ explicit caller-owned directory:
 
 ```bash
 python3 ingestion/batch/synthetic/generate.py generate \
-  --start-date 2026-03-28 \
-  --end-date 2026-03-30 \
+  --start-date 2026-10-24 \
+  --end-date 2026-10-26 \
   --seed 20260828 \
-  --generation-time-utc 2026-08-28T12:00:00Z \
+  --generation-time-utc 2026-12-31T12:00:00Z \
   --output-dir /tmp/industrial-energy-synthetic
 ```
 
@@ -57,6 +57,41 @@ generation timestamp earlier than any generated publication is rejected.
 Seeds must be non-negative so they can be recorded by the raw-evidence
 envelope contract.
 
+The complete fictional source timeline starts on the `2026-08-26`
+`Europe/London` operating date. The customer, site, assignment, meter, and
+contract histories use fixed effective dates; cumulative meter registers also
+continue from one requested date to the next. A complete bundle before that
+date is rejected rather than fabricating a register history that disagrees
+with the evidence already loaded into Iceberg.
+
+## What running the generator means
+
+The generator is a stateless simulator of upstream source systems. It does not
+look in R2 or Iceberg to decide what is new. Its four inputs determine the
+evidence it returns:
+
+| Inputs compared with an earlier invocation | Result |
+|---|---|
+| Same dates, seed, generation time, and version | Byte-identical replay |
+| Same dates and seed, later generation time | Same nine source JSONL files; a different evidence-run timestamp in the manifest |
+| Later operating dates with the same seed | New interval evidence; unchanged master revisions and the shared meter boundary replay exactly |
+| Same operating dates with a different seed | Different meter values under the same source identities; this is a conflict, not a valid append |
+
+Use `20260828` as the fixed project seed for this synthetic timeline. The seed
+is a reproducibility control, not a value that should change on every run. The
+Airflow pipeline enforces it. Other CLI seeds are only for isolated generator
+experiments whose rows will not be loaded into the project catalog.
+
+Range composition is guaranteed: generating 26 August and 27 August
+separately produces the same source-revision identities and payloads as
+generating 26–27 August together. This is what makes a later daily schedule or
+overlapping manual backfill safe. The original 26 August reference bundle
+remains byte-compatible with its known-good source hashes.
+
+This file only creates fictional source-shaped records and a manifest. It does
+not upload to R2, validate or quarantine rows, load Iceberg, or build dbt
+models; those are later tasks in the Airflow workflow.
+
 ## Outputs
 
 | Source contract | File | `source_schema_id` |
@@ -78,8 +113,9 @@ last, after the JSONL files.
 
 ## Included scenarios
 
-Every valid date range contains at least 46 intervals, so the generator places
-the following cases at fixed, documented offsets inside the range:
+Every valid operating date contains at least 46 intervals, so the generator
+places the following interval cases at fixed local period numbers on each
+date. Stable event-time placement keeps overlapping requests consistent:
 
 - normal delivery and a `0.300000 MWh_th` shortfall;
 - approved extra delivery with both billable and unbilled excess;

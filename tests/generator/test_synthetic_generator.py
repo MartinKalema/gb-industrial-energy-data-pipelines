@@ -11,13 +11,28 @@ import pytest
 
 from ingestion.batch.synthetic.generate import (
     DATASET_FILES,
+    GENERATOR_VERSION,
     build_bundle,
     intervals_for_local_dates,
+    jsonl_bytes,
     write_bundle,
 )
+from ingestion.batch.pipeline.validation import payload_sha256, source_revision_identity
 
 
 GENERATION_TIME = datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)
+REFERENCE_DATE = date(2026, 8, 26)
+REFERENCE_DATASET_HASHES = {
+    "customer_master": "ea56a42cb5f28244987e26072652606d653994d6a29011b5868f1fb5e4105603",
+    "industrial_site_master": "69496ec2141f58c44f610021f685cd6a33f3040aead8f7ae57d4123e91e9633d",
+    "delivery_point_assignment": "e87e394a9bc5a8231ef8452114c3055c216aa9397363eeafaaf7cefa15b7fb17",
+    "revenue_meter_assignment": "bcef7d9986d1f627402d59ef5af8ebe0aa588cdcd07c920de22278dd7eb890c3",
+    "contract_terms": "62fb32f32e33ce47ed595bb99285c566eb199427f2fff65bf49a032acbd48c34",
+    "commitment_schedule": "e1a79c25ed49261e9954fd70e56d173e78740c5a49b3ec0e3137c25080362ee2",
+    "approved_excess_order": "d960de92e251e1dc00221ffd7708d12a84c36daefc98bc2b1a434b4446a73149",
+    "revenue_meter_reading": "a2236ae3ded3cd1c9e7154ab5f25d8b518dee27b85d518e989ed081ecae7f37d",
+    "delivery_point_capacity_assessment": "5220fe106996e094ea2bd21e225455b1b731ad35c26a54675950d4606668ca0e",
+}
 
 
 def bundle(
@@ -61,6 +76,65 @@ def test_identical_inputs_produce_byte_identical_artifacts(tmp_path: Path) -> No
         assert (first / filename).read_bytes() == (second / filename).read_bytes()
 
 
+def test_reference_day_remains_compatible_with_original_evidence() -> None:
+    records, manifest = bundle(start_date=REFERENCE_DATE, end_date=REFERENCE_DATE)
+
+    assert {
+        dataset: hashlib.sha256(jsonl_bytes(rows)).hexdigest()
+        for dataset, rows in records.items()
+    } == REFERENCE_DATASET_HASHES
+    history = next(
+        item
+        for item in manifest["scenario_catalog"]
+        if item["scenario_id"] == "customer_contract_site_history"
+    )
+    assert history["effective_change_at_utc"] == "2026-08-26T11:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("first_date", "second_date"),
+    [
+        (REFERENCE_DATE, date(2026, 8, 27)),
+        (date(2026, 10, 24), date(2026, 10, 25)),
+    ],
+)
+def test_daily_bundles_compose_to_the_same_two_day_timeline(
+    first_date: date, second_date: date
+) -> None:
+    first, _ = bundle(start_date=first_date, end_date=first_date)
+    second, _ = bundle(start_date=second_date, end_date=second_date)
+    combined, _ = bundle(start_date=first_date, end_date=second_date)
+
+    def identity_payloads(dataset: str, rows: list[dict]) -> dict[str, str]:
+        return {
+            source_revision_identity(dataset, row): payload_sha256(row) for row in rows
+        }
+
+    for dataset in DATASET_FILES:
+        first_rows = identity_payloads(dataset, first[dataset])
+        second_rows = identity_payloads(dataset, second[dataset])
+        combined_rows = identity_payloads(dataset, combined[dataset])
+        common_identities = first_rows.keys() & second_rows.keys()
+
+        assert all(
+            first_rows[identity] == second_rows[identity]
+            for identity in common_identities
+        ), dataset
+        assert first_rows | second_rows == combined_rows, dataset
+
+
+def test_generation_timestamp_changes_evidence_run_not_source_rows() -> None:
+    first, first_manifest = bundle()
+    later_time = datetime(2027, 1, 1, 12, 0, tzinfo=timezone.utc)
+    second, second_manifest = build_bundle(
+        date(2026, 8, 27), date(2026, 8, 27), 20260828, later_time
+    )
+
+    assert first == second
+    assert first_manifest["generated_at_utc"] == "2026-12-31T12:00:00Z"
+    assert second_manifest["generated_at_utc"] == "2027-01-01T12:00:00Z"
+
+
 def test_different_seed_changes_measurements_without_changing_event_keys() -> None:
     first, _ = bundle(seed=11)
     second, _ = bundle(seed=12)
@@ -97,6 +171,7 @@ def test_manifest_counts_and_hashes_every_jsonl_file(tmp_path: Path) -> None:
     )
     assert manifest["coverage"]["utc_half_hour_interval_count"] == 48
     assert manifest["generated_at_utc"] == "2026-12-31T12:00:00Z"
+    assert manifest["generator"]["version"] == GENERATOR_VERSION
     assert len(manifest["datasets"]) == 9
 
     for item in manifest["datasets"]:
@@ -357,6 +432,16 @@ def test_generation_time_cannot_precede_the_generated_source_evidence() -> None:
             date(2026, 8, 27),
             1,
             datetime(2026, 8, 27, 0, 0, tzinfo=timezone.utc),
+        )
+
+
+def test_complete_bundle_rejects_dates_before_the_continuous_timeline() -> None:
+    with pytest.raises(ValueError, match="timeline starts on 2026-08-26"):
+        build_bundle(
+            date(2026, 8, 25),
+            date(2026, 8, 25),
+            1,
+            GENERATION_TIME,
         )
 
 
