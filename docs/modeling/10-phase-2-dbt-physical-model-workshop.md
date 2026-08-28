@@ -239,8 +239,47 @@ This representation prevents a correction from inventing a business era while
 still preserving genuine historical changes. A separate knowledge-time model
 is required to reproduce the description that was known before a correction.
 
+### DBT-006 — separate current and knowledge-time facts
+
+Accepted on 2026-08-28:
+
+> Publish one current accepted delivery fact at the normal business grain and
+> a separate revision-aware fact history whose knowledge windows reproduce the
+> answer that was valid at a requested publication cutoff.
+
+Rules:
+
+- Build per-source revision histories that preserve the revisions which
+  actually became authoritative and calculate `known_from_utc` and
+  `known_to_utc` knowledge windows.
+- A revision becomes knowledge-eligible only after it is valid, published, and
+  approved. Its eligibility time is no earlier than both `published_at_utc`
+  and `approved_at_utc`.
+- Never let a later-arriving lower source revision displace a higher accepted
+  revision. Revisions that never became authoritative do not receive a false
+  knowledge window.
+- Let accepted cancellations or withdrawals close the preceding knowledge
+  window and represent the resulting absent or withdrawn business state; do
+  not fall back to an older active revision.
+- Keep `fct_steam_delivery_interval` at one current row per delivery point and
+  interval.
+- Use `fct_steam_delivery_interval_history` for result revisions. Its grain
+  additionally includes the result's knowledge window, so it is an audit fact
+  rather than the relation used for ordinary current reporting.
+- Resolve an as-known query with
+  `known_from_utc <= requested_cutoff` and
+  (`known_to_utc > requested_cutoff` or `known_to_utc is null`).
+- Derive current and historical answers from the same revision-precedence and
+  business-calculation logic so they cannot define the metrics differently.
+- Do not treat Iceberg snapshot time, Airflow run time, or pipeline ingestion
+  time as source knowledge time. Preserve those clocks separately for lineage.
+
+The history relation stores additional rows and costs more to calculate, but
+it satisfies the accepted audit question without duplicating revisions in the
+current dimensional fact.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 through DBT-005 are accepted;
+The dbt runtime and Trino connection are verified. DBT-001 through DBT-006 are accepted;
 remaining physical modeling decisions are being reviewed one at a time before
 the mart SQL is implemented.
