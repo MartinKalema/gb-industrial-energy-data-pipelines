@@ -171,8 +171,42 @@ Rules:
 Higher-precision monetary storage uses more bytes than a two-decimal amount,
 but prevents interval-level rounding from changing period totals.
 
+### DBT-004 — deterministic SHA-256 warehouse keys
+
+Accepted on 2026-08-28:
+
+> Generate replay-stable SHA-256 warehouse keys from the durable source fields
+> that define a dimension version or fact grain, while retaining those source
+> identifiers as separate columns.
+
+Rules:
+
+- Generate each dimension key from `source_system_id` plus the stable source
+  version or assignment-episode identifier that represents that dimension row.
+- Generate `delivery_interval_key` from the delivery-point natural identifier
+  and canonical UTC interval start that define the accepted fact grain.
+- Do not include `source_revision` in a dimension or fact key. A source
+  correction updates the accepted representation of the same business version
+  or interval instead of creating another dimensional row.
+- A genuine new effective business version has a new source version or episode
+  identifier and therefore receives a new dimension key.
+- Canonicalize key components with explicit field ordering, UTC timestamp
+  formatting, unambiguous separators, and no locale-dependent conversion.
+- Reject null required key components rather than hashing a null placeholder
+  into a valid-looking business key.
+- Store the digest as lowercase 64-character hexadecimal text and test it as
+  non-null and unique at each declared grain.
+- Use a readable integer `date_key` in `YYYYMMDD` form; date is the deliberate
+  exception to the hash-key rule.
+- Preserve every durable source natural, version, assignment, and interval
+  identifier beside the warehouse key for lineage and debugging.
+
+Hexadecimal SHA-256 keys occupy more storage than sequential integers, but they
+remain identical across full rebuilds, retries, and future batch/stream paths
+without a centralized sequence service.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 through DBT-003 are accepted;
+The dbt runtime and Trino connection are verified. DBT-001 through DBT-004 are accepted;
 remaining physical modeling decisions are being reviewed one at a time before
 the mart SQL is implemented.
