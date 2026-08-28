@@ -4,7 +4,7 @@ Airflow orchestrates finite workflows:
 
 - historical extracts and backfills;
 - raw-to-validated batch loads;
-- `dbt build` through `dbt-trino`;
+- bounded dbt build, run, and test tasks through `dbt-trino`;
 - batch/stream reconciliation;
 - Iceberg compaction and metadata maintenance;
 - source freshness and quality checks;
@@ -12,30 +12,56 @@ Airflow orchestrates finite workflows:
 
 Long-running IRIS, Redpanda, and Spark consumers run as supervised services. Airflow observes their health and triggers bounded recovery actions.
 
-## Implemented bounded batch DAG
+## Implemented steam-delivery data pipeline
 
-`industrial_energy_bounded_batch` is the first implemented DAG. In simple
+`steam_delivery_data_pipeline` is the first implemented DAG. In simple
 English, one manual run takes a small period of fictional industrial-energy
-source data from generation to durable raw evidence, validation/quarantine,
-typed Iceberg source tables, final count reconciliation, and a queryable
-successful-run coverage declaration.
+source data from generation to original files in R2, row checks with failures
+saved separately, typed Iceberg source tables, final count reconciliation, and
+a queryable successful-run coverage declaration. Six smaller dbt tasks then
+prepare and test the loaded data and calculations, build the dimensional
+tables, and test the complete mart through local Trino.
 
 The task order is:
 
 ```text
-plan_run
-  -> generate_source_bundle
-  -> land_immutable_raw_bundle
-  -> validate_and_quarantine
+validate_run_parameters
+  -> generate_synthetic_source_files
+  -> save_original_source_files_to_r2
+  -> validate_source_rows_and_save_failures_separately
   -> load_validated_rows_to_iceberg
-  -> reconcile_evidence_counts
-  -> publish_batch_run_coverage
+  -> verify_every_source_row_was_handled
+  -> record_successfully_loaded_date_range
+  -> prepare_and_test_loaded_data_with_dbt
+  -> prepare_and_test_delivery_calculations_with_dbt
+  -> build_current_delivery_fact_with_dbt
+  -> build_delivery_history_fact_with_dbt
+  -> build_dimension_tables_with_dbt
+  -> test_complete_dimensional_mart_with_dbt
 ```
+
+Each name says what the operator should expect:
+
+| Task | Plain-English result |
+|---|---|
+| `validate_run_parameters` | The dates, fixed seed, timestamp, and local work folder are safe to use. |
+| `generate_synthetic_source_files` | Nine fictional business-source files and one file list with counts and hashes exist. |
+| `save_original_source_files_to_r2` | The exact original files and their evidence details are durably saved in R2. |
+| `validate_source_rows_and_save_failures_separately` | Valid rows are accepted; failed rows are preserved separately with reasons. |
+| `load_validated_rows_to_iceberg` | Accepted rows are available in typed Iceberg source tables. |
+| `verify_every_source_row_was_handled` | Counts prove that no original row silently disappeared. |
+| `record_successfully_loaded_date_range` | dbt can see which operating dates the reconciled load covered. |
+| `prepare_and_test_loaded_data_with_dbt` | Nine revision-preserving source views are ready, and their 235 source and staging checks passed. |
+| `prepare_and_test_delivery_calculations_with_dbt` | Thirty-three reusable calculation views are ready, and their eight focused checks passed. |
+| `build_current_delivery_fact_with_dbt` | The current 30-minute delivery fact is ready. |
+| `build_delivery_history_fact_with_dbt` | The as-known delivery-history fact is ready. |
+| `build_dimension_tables_with_dbt` | The 13 physical dimension and revision-audit tables are ready. |
+| `test_complete_dimensional_mart_with_dbt` | All 70 final mart and reconciliation checks passed. |
 
 Each task exchanges only a small JSON summary through XCom. Records and bulk
 files do not pass through the Airflow metadata database.
 
-The final task writes exactly one row per canonical pipeline run to
+The final source/control task writes exactly one row per canonical pipeline run to
 `r2.industrial_energy_control.batch_run_coverage`, and only runs after count
 reconciliation succeeds. This technical timetable is what lets dbt build
 expected half-hour rows even when all business evidence for an interval is
@@ -43,9 +69,47 @@ missing. Exact Airflow replays reuse the row and retain its first successful
 attempt lineage; a changed stable payload under the same run identity is
 rejected.
 
-The DAG has no schedule, permits one active run, and retries each failed task
-once after one minute. Each task has a 20-minute timeout and the whole run has
-a 45-minute timeout. Its parameters are:
+The six downstream dbt tasks accept only a created or exactly reused coverage
+row for the same pipeline identity. They run in a fixed order:
+
+1. Build the nine staging views and run the 235 tests that are safe at that
+   point.
+2. Build the 33 intermediate calculation views and run their eight focused
+   tests.
+3. Build the current delivery fact.
+4. Build the source-knowledge delivery-history fact.
+5. Build the 13 dimension and revision-audit tables. The data-status dimension
+   reads the completed facts, so this section must follow both fact sections on
+   a clean catalog.
+6. Run the 70 final dimensional-mart and reconciliation tests.
+
+The first two tasks use dbt's cautious test selection. In simple terms, dbt
+runs a test only when every model that test needs is available in that section;
+it does not pull a later mart model into an earlier task. All six use
+`--no-populate-cache`, write artifacts into the persistent Airflow volume in a
+separate folder for each task and attempt, and return only compact result counts
+through XCom. If a task fails, Airflow retries only that task. Earlier
+successful dbt tasks stay successful and their relations remain available.
+This applies to a retry or task clear inside the same Airflow run. Triggering a
+brand-new DAG run intentionally starts the 13-task sequence again, with the
+source layers safely reusing identical evidence and rows.
+
+A successful coverage row proves the source load reconciled. The dimensional
+mart is ready only when `test_complete_dimensional_mart_with_dbt` succeeds.
+
+The DAG has no schedule and permits one active run. Source/control tasks retry
+once after one minute and have 20-minute execution limits. Each dbt task has a
+120-minute subprocess limit, a 125-minute Airflow limit, and one retry after two
+minutes. The extra five minutes leave room for up to one minute of local
+process cleanup, one minute of Trino cleanup, and scheduler margin. A timeout
+stops that task's dbt process and local child-process group before the writer
+pool is released, cancels only Trino queries carrying that exact task
+attempt's tag, and waits until no active match remains. If Trino cannot confirm
+the cleanup, Airflow disables the automatic retry so a new writer cannot
+overlap an uncertain old one. The whole run has a bounded practical ceiling of
+180 minutes. A dbt retry happens only if enough DAG-run time remains; the
+180-minute limit does not guarantee a complete second attempt. The DAG
+parameters are:
 
 - `start_date`: first operating date, inclusive;
 - `end_date`: last operating date, inclusive and no earlier than the start;
@@ -94,11 +158,18 @@ Airflow waits for local Trino to become healthy. The UI is available at
 `change-me` password. Use the documented command in the
 [local Airflow runtime guide](../infrastructure/airflow/README.md) to read it.
 
-In the UI, open `industrial_energy_bounded_batch`, choose **Trigger DAG w/
+In the UI, open `steam_delivery_data_pipeline`, choose **Trigger DAG w/
 config**, and provide an inclusive date range, seed, and fixed UTC generation
 time. Reusing all four values is an intentional idempotency test: it produces
 the same pipeline identity, reuses identical R2 evidence, and skips exact
-Iceberg replays.
+Iceberg source replays before running the restartable dbt sections.
+
+Open any of the six dbt tasks in the Grid view to follow that section's model or
+test output. If one fails, fix the cause and retry or clear only that failed
+task; the earlier green sections do not need to run again. Do not run the
+standalone dbt command at the same time as an Airflow dbt task: the Airflow
+`iceberg_writer` pool serializes in-DAG work, but cannot serialize an unrelated
+host process.
 
 The complete object layout, validation rules, lineage columns, failure
 recovery, and scale trade-offs are documented in the

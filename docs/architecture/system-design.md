@@ -67,8 +67,11 @@ Raw retention makes revised market publications, meter corrections, and stream-g
 1. Airflow selects a bounded date/publication window from a persisted high-water mark.
 2. The extractor calls Elexon/NESO, validates the response envelope, and stores raw evidence.
 3. A batch writer creates or merges validated Iceberg records idempotently.
-4. Airflow invokes `dbt build` through the Trino adapter.
-5. Data tests, source freshness, reconciliation totals, and lineage artifacts are published.
+4. Airflow invokes six ordered dbt tasks through the Trino adapter: prepare and
+   test staging, prepare and test calculations, build the current fact, build
+   the history fact, build the dimensions, and run the final mart tests.
+5. If a dbt task fails, Airflow retries only that task. The final test task
+   certifies the complete mart as ready after the earlier checkpoints succeed.
 6. The high-water mark advances only after durable writes and required checks succeed.
 
 ## Streaming flow

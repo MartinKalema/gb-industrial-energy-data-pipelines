@@ -27,7 +27,7 @@ Generated bulk data stays out of version control. See the
 
 ## Bounded Airflow pipeline
 
-The manual `industrial_energy_bounded_batch` DAG performs these stages:
+The manual `steam_delivery_data_pipeline` DAG performs these stages:
 
 1. Validate an inclusive date range of at most 31 days, a non-negative seed,
    and a fixed UTC generation timestamp.
@@ -43,15 +43,26 @@ The manual `industrial_energy_bounded_batch` DAG performs these stages:
 7. Reconcile raw, accepted, quarantine, duplicate, inserted, and reused counts.
 8. Publish one idempotent successful-run row to the Iceberg coverage control
    table so dbt can construct every expected local-date interval.
+9. Build and test the nine revision-preserving staging views through dbt and
+   Trino.
+10. Build and test the 33 reusable delivery-calculation views.
+11. Build the current 30-minute delivery fact.
+12. Build the source-knowledge delivery-history fact.
+13. Build the 13 dimension and revision-audit tables. This follows both facts
+    because the data-status dimension reads them.
+14. Run the 70 final dimensional-mart and reconciliation tests.
 
 The exact run contract, R2 prefixes, lineage columns, retry rules, and recovery
 procedures are in the
 [bounded pipeline architecture and runbook](../../docs/architecture/bounded-airflow-r2-iceberg-pipeline.md).
 Triggering instructions are in the [Airflow guide](../../orchestration/README.md).
 
-The pipeline preserves source revisions. It does not select the current
-business revision or produce dimensional facts; those transformations belong
-to the later dbt boundary.
+The ingestion component preserves source revisions and does not select the
+current business revision or produce dimensional facts. The complete Airflow
+DAG crosses that boundary only after ingestion reconciliation, when six
+downstream tasks invoke the separate dbt project. Each is a restart point: if
+one dbt task fails, Airflow retries it without rerunning the earlier successful
+dbt tasks.
 
 ## Storage boundary
 
@@ -66,7 +77,7 @@ only by tests.
 The remaining bounded batch work includes:
 
 - ingest Elexon FUELHH as a separate public external-API sidecar; and
-- build the physical dimensional mart and tests through dbt-trino.
+- add a presentation/API slice over the governed dimensional mart.
 
 FUELHH is not joined to the steam-delivery mart. NESO carbon and IRIS streaming
 are later-scope sources, not hidden dependencies of the Phase 2 batch slice.

@@ -28,7 +28,8 @@ Model layers:
 - `marts/` — eight logical dimensions, five revision-audit companions, the
   30-minute current delivery fact, and its source-knowledge history.
 
-Build the complete project after the bounded Airflow source DAG succeeds:
+For standalone development or recovery diagnostics after coverage publication,
+build the complete project with:
 
 ```bash
 uv run dbt build \
@@ -40,7 +41,26 @@ uv run dbt build \
 The R2 catalog currently needs `--no-populate-cache` to avoid eager list-view
 introspection; model creation and data tests still run normally. The local
 profile uses one dbt thread to avoid concurrent metadata bursts against the R2
-Data Catalog beta. Airflow does not yet invoke dbt automatically.
+Data Catalog beta.
+
+Airflow does not use the single all-project command above. After source
+reconciliation and coverage publication, it divides the same full-rebuild
+baseline into six ordered restart points:
+
+| Airflow task | dbt work |
+|---|---|
+| `prepare_and_test_loaded_data_with_dbt` | Build 9 staging views and run 235 safe source/staging tests. |
+| `prepare_and_test_delivery_calculations_with_dbt` | Build 33 intermediate views and run 8 focused tests. |
+| `build_current_delivery_fact_with_dbt` | Build the current interval fact. |
+| `build_delivery_history_fact_with_dbt` | Build the source-knowledge history fact. |
+| `build_dimension_tables_with_dbt` | Build 13 dimension and revision-audit tables after both facts; `dim_data_status` reads them. |
+| `test_complete_dimensional_mart_with_dbt` | Run 70 final mart and reconciliation tests. |
+
+The two preparation tasks use cautious test selection, which means a test runs
+only when all the models it needs belong to that section. If a task fails,
+Airflow retries only that task; earlier successful sections stay complete. Use
+the all-project command for standalone development or recovery diagnostics,
+not concurrently with any Airflow dbt task.
 
 The first mart is a deliberate full-rebuild correctness baseline. Growing data
 does not by itself justify incremental models; a later measured optimization

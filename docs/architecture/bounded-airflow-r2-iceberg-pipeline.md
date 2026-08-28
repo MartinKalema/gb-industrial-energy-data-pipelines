@@ -1,4 +1,4 @@
-# Bounded Airflow to R2 and Iceberg pipeline
+# Bounded Airflow to R2, Iceberg, and dbt pipeline
 
 ## What this pipeline does, in simple English
 
@@ -6,7 +6,9 @@ An operator chooses a small date range and starts one Airflow run. The pipeline
 creates the nine synthetic business-source files for that period, saves the
 original bytes permanently in Cloudflare R2, checks every record, separates
 invalid records from valid ones, and writes the valid records into typed
-Apache Iceberg tables through Trino.
+Apache Iceberg tables through Trino. Once those source rows reconcile, it
+publishes the expected date coverage and uses dbt to build and test the
+delivery, SLA, availability, and earned-revenue dimensional marts.
 
 The important idea is that the original evidence is never silently corrected
 or overwritten. If a record is bad, its original content and the reasons it
@@ -14,14 +16,16 @@ failed remain in quarantine. If the same run is tried again, identical evidence
 is reused instead of duplicated. This gives us a reproducible path from an
 Iceberg row back to the exact source object and JSONL line that produced it.
 
-This is the first Phase 2 batch ingestion boundary. It loads source-shaped,
-revision-preserving tables; it does not yet build the dimensional mart or
-select the current business revision.
+The first seven tasks form the Phase 2 ingestion/control boundary and preserve
+source revisions. Six ordered dbt tasks form the separate analytical boundary:
+they select authoritative revisions, prepare shared calculations, build the
+current and as-known history facts, build the dimensions, and run final tests.
 
 ## Current implementation and verification status
 
-The DAG and its pipeline components are implemented. The complete Compose path
-was verified against real Cloudflare R2, R2 Data Catalog, and Trino 478 on
+The DAG and its pipeline components are implemented. The seven-task
+source/control Compose path was verified against real Cloudflare R2, R2 Data
+Catalog, and Trino 478 on
 2026-08-28 with pipeline ID
 `batch-20260826-20260826-77387cd7bfe41eb9`:
 
@@ -41,14 +45,14 @@ the deterministic pipeline identity.
 
 The implementation is in:
 
-- [`orchestration/dags/industrial_energy_batch.py`](../../orchestration/dags/industrial_energy_batch.py)
+- [`orchestration/dags/steam_delivery_data_pipeline.py`](../../orchestration/dags/steam_delivery_data_pipeline.py)
 - [`ingestion/batch/pipeline/`](../../ingestion/batch/pipeline/)
 - [`infrastructure/airflow/`](../../infrastructure/airflow/)
 - [`infrastructure/compose.yaml`](../../infrastructure/compose.yaml)
 
 ## Bounded run contract
 
-The Airflow DAG is `industrial_energy_bounded_batch`. It is manually triggered
+The Airflow DAG is `steam_delivery_data_pipeline`. It is manually triggered
 and has no schedule. Each run receives four explicit parameters:
 
 | Parameter | Contract | Why it is explicit |
@@ -65,12 +69,17 @@ date before the continuous synthetic timeline, any seed other than the fixed
 project seed, a non-UTC generation time, unsafe catalog/schema identifiers, or
 a relative working directory.
 
-Airflow permits only one active run of this DAG. Each task receives one retry
-after one minute, a 20-minute execution timeout, and the whole DAG run has a
-45-minute timeout. Airflow XCom carries only small dictionaries containing
-identifiers, paths, counts, hashes, and object locations; source records move
-through R2 and the run-scoped Airflow work volume, not through the metadata
-database.
+Airflow permits only one active run of this DAG. The seven source/control tasks
+receive one retry after one minute and a 20-minute execution timeout. Each of
+the six dbt tasks has a 120-minute subprocess limit, a 125-minute Airflow limit,
+and one retry after two minutes. The outer limit leaves time for up to one
+minute of local process cleanup, one minute of Trino cleanup, and scheduler
+margin. The whole DAG run has a bounded practical ceiling of 180 minutes. A dbt
+retry runs only if enough DAG-run time remains; the limit does not guarantee a
+complete second attempt. Airflow XCom carries only small
+dictionaries containing identifiers, paths, counts, hashes, and artifact
+locations; source records and per-node dbt results do not pass through the
+metadata database.
 
 The pipeline identity is deterministic for the combination of generator
 version, start date, end date, seed, and generation timestamp:
@@ -138,6 +147,12 @@ Airflow on this computer
   7. Trino commits accepted rows to Iceberg tables stored on R2
   8. reconcile counts and write the summary to R2
   9. publish the successfully reconciled local-date coverage to Iceberg
+ 10. build and test the nine revision-preserving staging views through dbt
+ 11. build and test the 33 delivery-calculation views
+ 12. build the current delivery fact
+ 13. build the source-knowledge delivery-history fact
+ 14. build the 13 dimension and revision-audit tables
+ 15. run the 70 final dimensional-mart and reconciliation tests
 
 Remote managed services
   Cloudflare R2 object storage + Cloudflare R2 Data Catalog
@@ -151,6 +166,8 @@ The responsibilities are deliberately separate:
   checks without depending on Airflow, R2, Trino, or Spark.
 - Trino performs finite table creation, identity checks, and Iceberg writes.
 - Iceberg supplies typed tables, snapshots, and table metadata over R2.
+- dbt applies revision precedence, dimensional logic, and executable quality
+  rules through finite Trino SQL after the coverage row exists.
 - Spark is not used in this batch DAG. It remains the streaming compute engine
   for Phase 3.
 
@@ -265,7 +282,7 @@ contents change?”
 
 ## Retry and idempotency rules
 
-Retries are safe at three boundaries:
+Retries are safe at four boundaries:
 
 1. The generator uses fixed inputs and writes deterministic source files and a
    hashed manifest into a run-scoped working directory.
@@ -275,6 +292,12 @@ Retries are safe at three boundaries:
    before each write. If the table already contains that identity and hash, the
    row is counted as an exact replay. If the identity exists with a different
    hash, the row is a conflict and the existing row is never updated.
+4. dbt runs the full-rebuild baseline as six ordered restart points: staging
+   build/tests, intermediate build/tests, current fact, history fact,
+   dimensions, and final mart tests. Each task and try gets a separate
+   target/log/result path. Its Trino connections carry an exact task-attempt
+   tag, so failure cleanup never selects another dbt run by shared SQL text or
+   adapter name. A normal Airflow retry repeats only the failed section.
 
 New rows are written with `MERGE ... WHEN NOT MATCHED THEN INSERT`. The loader
 checks the table before the merge and confirms the identities after it. This
@@ -283,13 +306,14 @@ revisions are append-only evidence here; choosing a current revision belongs in
 the later dbt model.
 
 Iceberg does not enforce a unique constraint on `pipeline_identity_sha256`.
-`max_active_runs=1` serializes this DAG, and its load task uses the provisioned
-one-slot `iceberg_writer` Airflow pool. Every future manual or backfill DAG that
-writes these tables must use that same pool. The insert-only merge and
-post-write identity/hash check make completed
+`max_active_runs=1` serializes this DAG, and its source load, coverage, and six
+dbt tasks use the provisioned one-slot `iceberg_writer` Airflow pool. Every
+future manual or backfill DAG that writes these tables must use that same pool.
+The insert-only merge and post-write identity/hash check make completed
 chunks safe to retry after a partial failure, but they do not replace writer
 serialization when two first-time writers could race to insert the same
-identity.
+identity. A manual dbt process started outside Airflow does not participate in
+the pool and must not overlap any of the DAG's dbt tasks.
 
 ## Failures and recovery
 
@@ -306,6 +330,9 @@ identity.
 | Existing Iceberg table disagrees with its contract | Stops before inserting into that table | Apply an explicit compatible schema migration; do not silently coerce |
 | Same Iceberg identity has different content | Records a loader conflict; reconciliation fails | Investigate the competing source revision; never update the existing evidence row in place |
 | Two DAGs can write the same tables concurrently | Iceberg has no uniqueness constraint, so both first writers could insert | Put every writer in the same one-slot Trino-load pool before enabling another DAG |
+| A dbt model or data test fails | That dbt checkpoint and the DAG fail; reconciled source rows, coverage, and earlier successful checkpoints remain valid | Inspect that task's dbt log, correct the cause, and retry or clear only the failed task |
+| A dbt checkpoint exceeds 120 minutes, exits with an error, or is interrupted | Stops that local process group, cancels only active Trino queries with the exact task-attempt user/tag, and waits for a stable no-active-query result before releasing the writer pool | After confirmed cleanup, the normal retry of that checkpoint is safe; inspect its dbt/Trino logs for the cause |
+| Trino cannot confirm dbt query cleanup within 60 seconds | Fails the checkpoint without an automatic retry, because the previous write state is uncertain | Verify that no query with the logged task-attempt tag remains active, resolve Trino connectivity or cancellation, then rerun that checkpoint manually |
 | Airflow container stops after a partial task | Task history and work files remain in the named volume | Restart and retry with the same four inputs |
 
 Do not repair a failed run by editing a raw R2 object, accepted JSONL, or an
@@ -314,10 +341,15 @@ revision so the evidence history remains auditable.
 
 ## Observability and reconciliation
 
-Airflow shows task state, duration, retry count, and logs for the seven stages:
-plan, generate, raw landing, validation/quarantine, Iceberg load,
-reconciliation, and successful-run coverage publication. Small task summaries
-include hashes, locations, and counts.
+Airflow shows task state, duration, retry count, and logs for 13 tasks. The first
+seven check the run inputs, generate the source files, save the originals in
+R2, check rows and save failures separately, load accepted rows into Iceberg,
+verify every row was handled, and record the loaded date range. The next six
+prepare/test staging, prepare/test calculations, build the current fact, build
+the history fact, build the dimensions, and run final mart tests. Small task
+summaries include hashes, locations, and counts. Each dbt task streams its own
+model or test progress to the Airflow log and returns only its invocation ID,
+version, elapsed time, aggregate statuses, and artifact paths.
 
 The validation report records total and per-dataset accepted, quarantined, and
 exact-replay counts; quarantine-reason counts; accepted row identities/hashes;
@@ -340,7 +372,7 @@ uses a safe SHA-256 prefix of the Airflow run ID. Each summary is the compact
 proof that one execution accounted for every raw row without forcing a first
 insert and a later exact replay to claim the same immutable object key.
 
-Only after that proof succeeds, the final task inserts one row into
+Only after that proof succeeds, the final source/control task inserts one row into
 `r2.industrial_energy_control.batch_run_coverage`. The row records the
 inclusive `Europe/London` dates, generator and raw-manifest identity, balanced
 counts, reconciliation status, and first successful attempt artifact. Its
@@ -350,6 +382,26 @@ count. Therefore an exact replay reuses the first row, while the same
 `pipeline_run_id` with changed stable coverage content fails as an immutable
 payload conflict.
 
+The first dbt task then requires a created or exactly reused coverage row for
+the same pipeline identity, and each later dbt task depends on the preceding
+one. Coverage is deliberately not redefined as mart certification: it remains
+valid if dbt later fails. dbt replaces relations one at a time, so a failed
+checkpoint can leave a mixed set of relations inside that section. Airflow
+retries only the failed checkpoint; earlier successful checkpoints stay green
+and do not run again. Consumers must treat the mart as ready only after
+`test_complete_dimensional_mart_with_dbt` succeeds.
+
+The dbt order matters on a clean schema. The staging and intermediate sections
+prepare shared views, the current and history facts are built next, and the 13
+dimensions follow because `dim_data_status` reads both facts. The final 70 tests
+then certify the complete mart.
+
+Every dbt checkpoint and try has separate target, log, and compact result
+artifacts, so a failed attempt cannot be mistaken for an earlier success. The
+subprocess receives only the DBT/Trino connection settings and basic
+operating-system variables; R2 credentials remain in Airflow/Trino and are not
+inherited by dbt.
+
 ## Scale trade-offs and revisit triggers
 
 The 31-day maximum is intentional. This is a laptop-run portfolio pipeline, and
@@ -358,8 +410,9 @@ while validation evaluates cross-record relationships across that bundle.
 Trino writes are divided into `TRINO_INSERT_BATCH_SIZE` chunks (100 in Compose;
 the loader accepts 1 to 5,000) so one SQL statement does not grow without
 limit. Each statement also has a five-minute overall deadline, while Airflow
-bounds each task to 20 minutes and the run to 45 minutes. The loader still
-performs identity lookups and a merge per chunk, which
+limits source/control tasks to 20 minutes, each dbt subprocess to 120 minutes,
+each dbt task to 125 minutes, and the complete run to 180 minutes. The loader
+still performs identity lookups and a merge per chunk, which
 favours clarity and safe replay over maximum throughput.
 
 Revisit this design when any of these becomes true:
