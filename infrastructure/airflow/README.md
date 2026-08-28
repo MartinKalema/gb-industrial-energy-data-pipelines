@@ -97,11 +97,14 @@ docker compose --project-directory . -f infrastructure/compose.yaml \
 
 Open `http://127.0.0.1:8081`, sign in as `admin`, and manually trigger
 `industrial_energy_bounded_batch`. Supply an inclusive local operating-date
-range, a deterministic integer seed, and a fixed UTC generation timestamp.
+range on or after `2026-08-26`, the fixed project seed `20260828`, and a fixed
+UTC generation timestamp. Reuse the seed across dates; it identifies one
+continuous fictional meter timeline and is not a per-run random value.
 
-`plan_run_from_airflow()` rejects an end date before the start date and ranges
-longer than `PIPELINE_MAX_BATCH_DAYS`, so neither a UI mistake nor
-an API call can turn this DAG into an unbounded historical load.
+`plan_run_from_airflow()` rejects a date before the synthetic timeline, an end
+date before the start date, and ranges longer than `PIPELINE_MAX_BATCH_DAYS`,
+so neither a UI mistake nor an API call can turn this DAG into an unbounded
+historical load.
 
 ## Authentication reset
 

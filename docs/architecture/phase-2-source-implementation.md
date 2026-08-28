@@ -74,8 +74,8 @@ Generate one inclusive `Europe/London` operating day:
 
 ```bash
 python3 ingestion/batch/synthetic/generate.py generate \
-  --start-date 2026-08-27 \
-  --end-date 2026-08-27 \
+  --start-date 2026-08-26 \
+  --end-date 2026-08-26 \
   --seed 20260828 \
   --generation-time-utc 2026-08-28T12:00:00Z \
   --output-dir /tmp/industrial-energy-synthetic

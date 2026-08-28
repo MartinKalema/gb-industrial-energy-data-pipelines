@@ -39,11 +39,27 @@ a 45-minute timeout. Its parameters are:
 
 - `start_date`: first operating date, inclusive;
 - `end_date`: last operating date, inclusive and no earlier than the start;
-- `seed`: non-negative deterministic generator seed; and
+- `seed`: fixed project seed `20260828`; and
 - `generation_time_utc`: fixed UTC timestamp ending in `Z`.
 
 The normal maximum is 31 inclusive days. The run planner checks this again in
 Python, so a direct API trigger cannot bypass the bound enforced by the UI.
+
+It is manual because it is the controlled learning/backfill workflow: the
+operator chooses which fictional operating dates should exist. Triggering a
+run does not automatically mean new business data. Reusing all four inputs
+under the same generator version is an exact replay; changing only the
+generation timestamp creates a new evidence run around the same source rows;
+choosing later dates with the fixed
+`20260828` project seed appends new interval evidence. Changing the seed for an
+Airflow run is rejected because it would create a discontinuous meter timeline.
+
+The generator now represents one continuous synthetic timeline beginning on
+the `2026-08-26` Europe/London operating date. Daily ranges and combined
+backfills compose to the same rows, including the shared cumulative-meter
+boundary. If recurring growth is accepted later, add a separate daily DAG that
+derives a completed operating date from its Airflow data interval and calls the
+same workflow; keep this DAG manual for replays and backfills.
 
 Iceberg does not enforce a unique source-revision identity. This DAG's
 `max_active_runs=1` setting serializes its runs, and the load task uses the

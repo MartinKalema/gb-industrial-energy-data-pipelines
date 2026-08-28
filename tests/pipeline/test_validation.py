@@ -16,7 +16,7 @@ from ingestion.batch.synthetic.generate import build_bundle, write_bundle
 
 
 GENERATION_TIME = datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)
-LOCAL_DATE = date(2026, 3, 29)
+LOCAL_DATE = date(2026, 10, 25)
 
 
 def source_records() -> dict[str, list[dict]]:

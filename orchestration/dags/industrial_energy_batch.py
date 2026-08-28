@@ -55,26 +55,27 @@ def _small_xcom(stage: str, value: Any) -> dict[str, Any]:
     },
     params={
         "start_date": Param(
-            "2026-08-27",
+            "2026-08-26",
             type="string",
             format="date",
             description="First Europe/London operating date to generate (inclusive).",
         ),
         "end_date": Param(
-            "2026-08-27",
+            "2026-08-26",
             type="string",
             format="date",
             description="Last Europe/London operating date to generate (inclusive).",
         ),
         "seed": Param(
-            20260827,
+            20260828,
             type="integer",
             minimum=0,
             maximum=9_223_372_036_854_775_807,
-            description="Deterministic synthetic-data seed.",
+            enum=[20260828],
+            description="Fixed project seed for the continuous synthetic timeline.",
         ),
         "generation_time_utc": Param(
-            "2026-08-28T00:00:00Z",
+            "2026-08-28T12:00:00Z",
             type="string",
             format="date-time",
             pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$",
