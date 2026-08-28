@@ -95,8 +95,47 @@ This additional control table is accepted because deriving the spine only from
 available business rows would make a completely absent interval disappear and
 could falsely improve completeness metrics.
 
+### DBT-002 — layer schemas and model naming
+
+Accepted on 2026-08-28:
+
+> Keep dbt source declarations, staging code, intermediate logic, and marts in
+> separate repository folders, and materialize each transformation layer in an
+> explicitly named `industrial_energy_*` Trino/Iceberg schema.
+
+Physical structure:
+
+| dbt code | Physical result |
+|---|---|
+| `models/sources/` | Declares the existing nine tables in `r2.industrial_energy_validated`; creates no relation |
+| `models/staging/` | Revision-preserving views in `r2.industrial_energy_staging` named `stg_validated__<source_table>` |
+| `models/intermediate/` | Reusable business-logic views in `r2.industrial_energy_intermediate` named `int_<purpose>` |
+| `models/marts/` | Governed Iceberg dimensions and facts in `r2.industrial_energy_marts` named `dim_<subject>` and `fct_<process>` |
+
+Rules:
+
+- Use the dbt source name `validated` for
+  `r2.industrial_energy_validated`.
+- Use dbt's standard custom-schema behavior with the target schema
+  `industrial_energy`; do not override `generate_schema_name`. This produces
+  the accepted `industrial_energy_staging`, `industrial_energy_intermediate`,
+  and `industrial_energy_marts` schema names.
+- Staging models preserve every accepted source revision, source-owned column,
+  type, and pipeline-lineage field. They do not select current revisions,
+  apply business approval filters, or replace missing values.
+- Intermediate models own revision selection, event-time joins, interval
+  integration, and reusable calculations.
+- Analysts and product consumers use governed mart relations rather than
+  staging or intermediate models.
+- Keep the DBT-001 technical coverage relation separate in
+  `r2.industrial_energy_control`.
+
+Separate schemas create more namespaces to browse, but make the transformation
+boundary visible and reduce accidental use of source-shaped data as a finished
+business result.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 is accepted;
+The dbt runtime and Trino connection are verified. DBT-001 and DBT-002 are accepted;
 remaining physical modeling decisions are being reviewed one at a time before
 the mart SQL is implemented.
