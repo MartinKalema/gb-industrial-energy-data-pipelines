@@ -2,6 +2,19 @@
 
 dbt will compile and submit SQL through the Trino adapter. Trino will read and write Iceberg tables on R2 through the selected catalog.
 
+The project is initialized with dbt Core 1.12.3 and dbt-trino 1.10.3. The
+standard `dbt init` support directories are present, while the generic
+`models/example` directory is replaced by the layers required by this business
+process. Run local commands with:
+
+```bash
+uv run dbt debug --project-dir transformations --profiles-dir transformations
+```
+
+`profiles.yml` contains no credentials. It connects to the locally exposed
+Trino endpoint by default and reads container overrides from environment
+variables when Airflow runs dbt.
+
 Planned model layers:
 
 - `sources/` — declared validated Iceberg sources and freshness expectations
