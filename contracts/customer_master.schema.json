@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "customer_master.schema.json",
+  "title": "Effective customer-master version revision",
+  "description": "PSC-005: one published revision of one effective version of one synthetic customer business entity.",
+  "$comment": "The validation layer enforces non-overlapping versions and immutable one-to-one customer/tenant-scope identifiers across records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "customer_natural_id",
+    "customer_version_id",
+    "legal_name",
+    "display_name",
+    "industry_sector_code",
+    "country_code",
+    "lifecycle_status",
+    "tenant_authorization_scope_id",
+    "effective_from_utc",
+    "effective_to_utc",
+    "source_revision",
+    "revision_type",
+    "version_record_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "customer_master"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_version_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "legal_name": {
+      "$ref": "common.schema.json#/$defs/short_text"
+    },
+    "display_name": {
+      "$ref": "common.schema.json#/$defs/short_text"
+    },
+    "industry_sector_code": {
+      "type": "string",
+      "enum": [
+        "cement",
+        "ceramics",
+        "chemicals",
+        "food_and_beverage",
+        "metals",
+        "paper_and_pulp",
+        "other_industrial"
+      ]
+    },
+    "country_code": {
+      "const": "GB"
+    },
+    "lifecycle_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "inactive"
+      ]
+    },
+    "tenant_authorization_scope_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "effective_from_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "effective_to_utc": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "business_change",
+        "correction",
+        "deactivation",
+        "cancellation"
+      ]
+    },
+    "version_record_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "cancelled"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "descriptive_data_correction",
+        "version_cancelled"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    },
+    "synthetic_data": {
+      "const": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "cancellation"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "deactivation"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "lifecycle_status": {
+            "const": "inactive"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "cancellation"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "version_record_status": {
+            "const": "cancelled"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "version_record_status": {
+            "const": "active"
+          }
+        }
+      }
+    }
+  ]
+}

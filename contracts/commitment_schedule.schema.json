@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "commitment_schedule.schema.json",
+  "title": "Thirty-minute commitment-schedule revision",
+  "description": "PSC-008: one published revision of one base commitment for a delivery point and exact UTC half-hour interval.",
+  "$comment": "The validation layer verifies interval_end_utc is exactly 30 minutes after interval_start_utc and enforces relationship, contract, timestamp, and revision rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "source_commitment_revision_id",
+    "delivery_point_natural_id",
+    "customer_natural_id",
+    "contract_natural_id",
+    "interval_start_utc",
+    "interval_end_utc",
+    "source_revision",
+    "revision_type",
+    "schedule_record_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "commitment_schedule"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "source_commitment_revision_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "contract_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "interval_start_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "interval_end_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "obligation_status": {
+      "type": "string",
+      "enum": [
+        "committed",
+        "no_commitment"
+      ]
+    },
+    "committed_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "quantity_unit": {
+      "const": "MWh_th"
+    },
+    "commitment_reason_code": {
+      "type": "string",
+      "enum": [
+        "normal_operation",
+        "approved_maintenance",
+        "customer_shutdown",
+        "other_approved_exclusion"
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "change",
+        "correction",
+        "retroactive_change",
+        "withdrawal"
+      ]
+    },
+    "schedule_record_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "withdrawn"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "approval_reference": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "schedule_reconciliation",
+        "approved_retroactive_change",
+        "schedule_withdrawn"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "retroactive_change",
+              "withdrawal"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by",
+          "approval_reference"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "withdrawal"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "schedule_record_status": {
+            "const": "withdrawn"
+          },
+          "obligation_status": false,
+          "committed_mwh_th": false,
+          "quantity_unit": false,
+          "commitment_reason_code": false
+        }
+      },
+      "else": {
+        "required": [
+          "obligation_status",
+          "committed_mwh_th",
+          "quantity_unit",
+          "commitment_reason_code"
+        ],
+        "properties": {
+          "schedule_record_status": {
+            "const": "active"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "obligation_status": {
+            "const": "committed"
+          }
+        },
+        "required": [
+          "obligation_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "committed_mwh_th": {
+            "$ref": "common.schema.json#/$defs/decimal_20_6_positive"
+          },
+          "commitment_reason_code": {
+            "const": "normal_operation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "obligation_status": {
+            "const": "no_commitment"
+          }
+        },
+        "required": [
+          "obligation_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "committed_mwh_th": {
+            "const": "0.000000"
+          },
+          "commitment_reason_code": {
+            "enum": [
+              "approved_maintenance",
+              "customer_shutdown",
+              "other_approved_exclusion"
+            ]
+          }
+        },
+        "required": [
+          "approval_reference"
+        ]
+      }
+    }
+  ]
+}

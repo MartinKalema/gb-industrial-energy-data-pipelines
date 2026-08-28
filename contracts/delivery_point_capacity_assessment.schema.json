@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "delivery_point_capacity_assessment.schema.json",
+  "title": "Delivery-point capacity-assessment revision",
+  "description": "PSC-010: one published revision of assessed deliverable thermal capacity for a delivery point and exact UTC half-hour interval.",
+  "$comment": "The validation layer verifies 30-minute duration, quantity arithmetic, timestamp ordering, delivery-point assignment coverage, revision precedence, and absence of shared-capacity duplication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "source_capacity_revision_id",
+    "delivery_point_natural_id",
+    "interval_start_utc",
+    "interval_end_utc",
+    "assessment_status",
+    "quantity_unit",
+    "assessment_method",
+    "assessment_method_version",
+    "capacity_reason_code",
+    "source_revision",
+    "revision_type",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "delivery_point_capacity_assessment"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "source_capacity_revision_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "interval_start_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "interval_end_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "assessment_status": {
+      "type": "string",
+      "enum": [
+        "provisional",
+        "final",
+        "rejected",
+        "withdrawn"
+      ]
+    },
+    "nameplate_ceiling_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "operational_restriction_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "deliverable_capacity_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "quantity_unit": {
+      "const": "MWh_th"
+    },
+    "assessment_method": {
+      "const": "nameplate_minus_operational_restriction_floor_zero"
+    },
+    "assessment_method_version": {
+      "const": "1.0.0"
+    },
+    "capacity_reason_code": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "derated",
+        "planned_restriction",
+        "unavailable"
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "finalization",
+        "correction",
+        "withdrawal"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "finalized_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "operational_evidence_update",
+        "assessment_reconciliation",
+        "assessment_withdrawn"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "assessment_status": {
+            "enum": [
+              "provisional",
+              "final",
+              "rejected"
+            ]
+          }
+        },
+        "required": [
+          "assessment_status"
+        ]
+      },
+      "then": {
+        "required": [
+          "nameplate_ceiling_mwh_th",
+          "operational_restriction_mwh_th",
+          "deliverable_capacity_mwh_th"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "assessment_status": {
+            "const": "final"
+          }
+        },
+        "required": [
+          "assessment_status"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by",
+          "finalized_at_utc"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "finalization"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "approved_at_utc",
+          "approved_by",
+          "finalized_at_utc"
+        ],
+        "properties": {
+          "assessment_status": {
+            "const": "final"
+          },
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "withdrawal"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "withdrawal"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "assessment_status": {
+            "const": "withdrawn"
+          },
+          "nameplate_ceiling_mwh_th": false,
+          "operational_restriction_mwh_th": false,
+          "deliverable_capacity_mwh_th": false,
+          "finalized_at_utc": false
+        }
+      },
+      "else": {
+        "properties": {
+          "assessment_status": {
+            "not": {
+              "const": "withdrawn"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "capacity_reason_code": {
+            "const": "unavailable"
+          }
+        },
+        "required": [
+          "capacity_reason_code",
+          "deliverable_capacity_mwh_th"
+        ]
+      },
+      "then": {
+        "properties": {
+          "deliverable_capacity_mwh_th": {
+            "const": "0.000000"
+          }
+        }
+      }
+    }
+  ]
+}

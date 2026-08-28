@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "delivery_point_assignment.schema.json",
+  "title": "Effective delivery-point assignment revision",
+  "description": "PSC-004: one published revision of one effective relationship between a delivery point, industrial site, and customer.",
+  "$comment": "The validation layer enforces effective-period ordering, non-overlap, and Phase 2 site/delivery-point cardinality across records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "delivery_point_assignment_id",
+    "delivery_point_natural_id",
+    "delivery_point_name",
+    "site_natural_id",
+    "customer_natural_id",
+    "service_type",
+    "effective_from_utc",
+    "effective_to_utc",
+    "source_revision",
+    "revision_type",
+    "assignment_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "delivery_point_assignment"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "delivery_point_assignment_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_name": {
+      "$ref": "common.schema.json#/$defs/short_text"
+    },
+    "site_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "service_type": {
+      "const": "industrial_steam"
+    },
+    "effective_from_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "effective_to_utc": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "correction",
+        "cancellation"
+      ]
+    },
+    "assignment_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "cancelled"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "effective_period_correction",
+        "relationship_correction",
+        "assignment_cancelled"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "cancellation"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "cancellation"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "assignment_status": {
+            "const": "cancelled"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "assignment_status": {
+            "const": "active"
+          }
+        }
+      }
+    }
+  ]
+}

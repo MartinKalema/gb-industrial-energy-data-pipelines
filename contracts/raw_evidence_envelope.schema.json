@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "raw_evidence_envelope.schema.json",
+  "title": "Raw source-evidence envelope",
+  "description": "Immutable lineage metadata for the R2 raw object containing a source record. The source payload is validated separately with its record schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope_schema_id",
+    "envelope_schema_version",
+    "evidence_envelope_id",
+    "source_dataset",
+    "source_system_id",
+    "record_schema_id",
+    "record_schema_version",
+    "ingestion_method",
+    "ingested_at_utc",
+    "payload_sha256",
+    "raw_object_uri",
+    "raw_record_locator",
+    "content_type",
+    "content_length_bytes",
+    "record_count"
+  ],
+  "properties": {
+    "envelope_schema_id": {
+      "const": "raw_evidence_envelope"
+    },
+    "envelope_schema_version": {
+      "const": "1.0.0"
+    },
+    "evidence_envelope_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "source_dataset": {
+      "type": "string",
+      "enum": [
+        "customer_master",
+        "industrial_site_master",
+        "delivery_point_assignment",
+        "revenue_meter_assignment",
+        "contract_terms",
+        "commitment_schedule",
+        "approved_excess_order",
+        "revenue_meter_reading",
+        "delivery_point_capacity_assessment",
+        "elexon_fuelhh"
+      ]
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "record_schema_id": {
+      "type": "string",
+      "enum": [
+        "customer_master",
+        "industrial_site_master",
+        "delivery_point_assignment",
+        "revenue_meter_assignment",
+        "contract_terms",
+        "commitment_schedule",
+        "approved_excess_order",
+        "revenue_meter_reading",
+        "delivery_point_capacity_assessment",
+        "elexon_fuelhh"
+      ]
+    },
+    "record_schema_version": {
+      "const": "1.0.0"
+    },
+    "ingestion_method": {
+      "type": "string",
+      "enum": [
+        "synthetic_generation",
+        "http_batch"
+      ]
+    },
+    "ingested_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "payload_sha256": {
+      "$ref": "common.schema.json#/$defs/sha256"
+    },
+    "raw_object_uri": {
+      "$ref": "common.schema.json#/$defs/r2_object_uri"
+    },
+    "raw_record_locator": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "content_type": {
+      "type": "string",
+      "enum": [
+        "application/json",
+        "application/x-ndjson"
+      ]
+    },
+    "content_length_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "record_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "generator_run_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "generator_seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "request_mode": {
+      "type": "string",
+      "enum": [
+        "settlement_date",
+        "publication_time"
+      ]
+    },
+    "canonical_request_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://data\\.elexon\\.co\\.uk/bmrs/api/v1/datasets/FUELHH(?:\\?.*)?$"
+    },
+    "retrieved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "http_status": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "attempt_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "requested_settlement_date": {
+      "$ref": "common.schema.json#/$defs/iso_date"
+    },
+    "publication_from_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "publication_to_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ingestion_method": {
+            "const": "synthetic_generation"
+          }
+        },
+        "required": [
+          "ingestion_method"
+        ]
+      },
+      "then": {
+        "required": [
+          "generator_run_id",
+          "generator_seed"
+        ],
+        "properties": {
+          "source_dataset": {
+            "enum": [
+              "customer_master",
+              "industrial_site_master",
+              "delivery_point_assignment",
+              "revenue_meter_assignment",
+              "contract_terms",
+              "commitment_schedule",
+              "approved_excess_order",
+              "revenue_meter_reading",
+              "delivery_point_capacity_assessment"
+            ]
+          },
+          "request_mode": false,
+          "canonical_request_url": false,
+          "retrieved_at_utc": false,
+          "http_status": false,
+          "attempt_number": false,
+          "requested_settlement_date": false,
+          "publication_from_utc": false,
+          "publication_to_utc": false
+        }
+      },
+      "else": {
+        "required": [
+          "request_mode",
+          "canonical_request_url",
+          "retrieved_at_utc",
+          "http_status",
+          "attempt_number"
+        ],
+        "properties": {
+          "source_dataset": {
+            "const": "elexon_fuelhh"
+          },
+          "record_schema_id": {
+            "const": "elexon_fuelhh"
+          },
+          "generator_run_id": false,
+          "generator_seed": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "request_mode": {
+            "const": "settlement_date"
+          }
+        },
+        "required": [
+          "request_mode"
+        ]
+      },
+      "then": {
+        "required": [
+          "requested_settlement_date"
+        ],
+        "properties": {
+          "publication_from_utc": false,
+          "publication_to_utc": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "request_mode": {
+            "const": "publication_time"
+          }
+        },
+        "required": [
+          "request_mode"
+        ]
+      },
+      "then": {
+        "required": [
+          "publication_from_utc",
+          "publication_to_utc"
+        ],
+        "properties": {
+          "requested_settlement_date": false
+        }
+      }
+    }
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "source_dataset": { "const": "customer_master" },
+        "record_schema_id": { "const": "customer_master" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "industrial_site_master" },
+        "record_schema_id": { "const": "industrial_site_master" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "delivery_point_assignment" },
+        "record_schema_id": { "const": "delivery_point_assignment" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "revenue_meter_assignment" },
+        "record_schema_id": { "const": "revenue_meter_assignment" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "contract_terms" },
+        "record_schema_id": { "const": "contract_terms" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "commitment_schedule" },
+        "record_schema_id": { "const": "commitment_schedule" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "approved_excess_order" },
+        "record_schema_id": { "const": "approved_excess_order" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "revenue_meter_reading" },
+        "record_schema_id": { "const": "revenue_meter_reading" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "delivery_point_capacity_assessment" },
+        "record_schema_id": { "const": "delivery_point_capacity_assessment" }
+      }
+    },
+    {
+      "properties": {
+        "source_dataset": { "const": "elexon_fuelhh" },
+        "record_schema_id": { "const": "elexon_fuelhh" }
+      }
+    }
+  ]
+}

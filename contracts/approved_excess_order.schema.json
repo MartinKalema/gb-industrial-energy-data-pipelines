@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "approved_excess_order.schema.json",
+  "title": "Approved excess-order interval-allocation revision",
+  "description": "PSC-009: one published revision of one excess-order allocation for a delivery point and exact UTC half-hour interval.",
+  "$comment": "The validation layer enforces 30-minute duration, pre-start publication/approval cutoff, customer/contract/commitment consistency, and one eligible allocation per delivery-point interval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "excess_order_natural_id",
+    "order_interval_line_id",
+    "delivery_point_natural_id",
+    "customer_natural_id",
+    "contract_natural_id",
+    "interval_start_utc",
+    "interval_end_utc",
+    "approved_extra_mwh_th",
+    "quantity_unit",
+    "order_state",
+    "requested_at_utc",
+    "source_revision",
+    "revision_type",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "approved_excess_order"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "excess_order_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "order_interval_line_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "contract_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "interval_start_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "interval_end_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "approved_extra_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "quantity_unit": {
+      "const": "MWh_th"
+    },
+    "order_state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "approved",
+        "rejected",
+        "cancelled"
+      ]
+    },
+    "requested_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "amendment",
+        "correction",
+        "cancellation"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "customer_amendment",
+        "source_error",
+        "allocation_correction",
+        "customer_cancellation"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "order_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "order_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approved_extra_mwh_th": {
+            "$ref": "common.schema.json#/$defs/decimal_20_6_positive"
+          },
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "order_state": {
+            "const": "requested"
+          }
+        },
+        "required": [
+          "order_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approved_extra_mwh_th": {
+            "$ref": "common.schema.json#/$defs/decimal_20_6_positive"
+          },
+          "approval_state": {
+            "const": "pending"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "order_state": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "order_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "approval_state": {
+            "const": "rejected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "cancellation"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "cancellation"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "order_state": {
+            "const": "cancelled"
+          },
+          "approved_extra_mwh_th": {
+            "const": "0.000000"
+          },
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+name: gb-industrial-energy
+
+services:
+  trino:
+    image: trinodb/trino:478
+    profiles: [query]
+    environment:
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}
+      R2_ENDPOINT: ${R2_ENDPOINT:?R2_ENDPOINT is required}
+      R2_CATALOG_URI: ${R2_CATALOG_URI:?R2_CATALOG_URI is required}
+      R2_CATALOG_WAREHOUSE: ${R2_CATALOG_WAREHOUSE:?R2_CATALOG_WAREHOUSE is required}
+      R2_CATALOG_TOKEN: ${R2_CATALOG_TOKEN:?R2_CATALOG_TOKEN is required}
+    ports:
+      - "127.0.0.1:${TRINO_PORT:-8080}:8080"
+    volumes:
+      - ./infrastructure/trino/catalog:/etc/trino/catalog:ro
+      - ./tests/smoke:/opt/industrial-energy/smoke:ro
+    healthcheck:
+      test: [CMD, /usr/lib/trino/bin/health-check]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    mem_limit: 3g
+
+  spark-smoke:
+    image: apache/spark:3.5.3
+    profiles: [stream, smoke]
+    user: "0:0"
+    entrypoint: [/opt/spark/bin/spark-submit]
+    command:
+      - --master
+      - local[2]
+      - --driver-memory
+      - 2g
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - --packages
+      - org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,org.apache.iceberg:iceberg-aws-bundle:1.6.1
+      - /opt/industrial-energy/smoke/spark_streaming_append.py
+    environment:
+      R2_CATALOG_URI: ${R2_CATALOG_URI:?R2_CATALOG_URI is required}
+      R2_CATALOG_WAREHOUSE: ${R2_CATALOG_WAREHOUSE:?R2_CATALOG_WAREHOUSE is required}
+      R2_CATALOG_TOKEN: ${R2_CATALOG_TOKEN:?R2_CATALOG_TOKEN is required}
+      SMOKE_RUN_ID: ${SMOKE_RUN_ID:-manual}
+      SPARK_LOCAL_IP: 127.0.0.1
+      PYSPARK_PYTHON: python3
+    volumes:
+      - ./tests/smoke:/opt/industrial-energy/smoke:ro
+      - spark-smoke-checkpoints:/opt/industrial-energy/checkpoints
+      - spark-ivy-cache:/tmp/.ivy2
+    mem_limit: 4g
+
+volumes:
+  spark-smoke-checkpoints:
+  spark-ivy-cache:
