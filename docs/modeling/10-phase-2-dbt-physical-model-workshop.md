@@ -278,8 +278,41 @@ The history relation stores additional rows and costs more to calculate, but
 it satisfies the accepted audit question without duplicating revisions in the
 current dimensional fact.
 
+### DBT-007 — full-build-first mart materialization
+
+Accepted on 2026-08-28:
+
+> Establish the first dimensional mart as a full-build correctness baseline:
+> keep source-preserving staging and reusable intermediate logic as views, and
+> rebuild governed dimensions and facts as complete Iceberg tables before
+> introducing incremental processing.
+
+Rules:
+
+- Source declarations create no relation; staging and intermediate models are
+  views; dimensions and facts are tables.
+- A normal `dbt build` recalculates the complete governed mart from the
+  accepted Iceberg sources and successful-run coverage.
+- Prove the full-build row grain, revision precedence, missing-versus-zero
+  behavior, correction propagation, and accepted reconciliation scenarios
+  before optimizing refresh behavior.
+- Do not introduce an incremental predicate merely because history grows.
+  Revisit it only after measured runtime or scan cost is material.
+- A future incremental implementation must produce the same result as a full
+  rebuild and must recalculate both facts adjacent to a corrected cumulative
+  meter boundary plus all affected aggregates.
+- Keep the current fact and knowledge-time history fact as separate complete
+  tables in this baseline.
+- This decision does not close the separate Iceberg partition-layout question;
+  initial small tables may remain unpartitioned until measurements justify a
+  physical layout.
+
+The first build scans more history than a tuned incremental refresh, but its
+simple, complete calculation is the reference result against which every later
+optimization can be tested.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 through DBT-006 are accepted;
-remaining physical modeling decisions are being reviewed one at a time before
-the mart SQL is implemented.
+The dbt runtime and Trino connection are verified. DBT-001 through DBT-007 are
+accepted. The first full-build mart is being implemented; remaining physical
+modeling decisions stay open until they are reviewed together.
