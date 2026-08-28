@@ -314,5 +314,8 @@ optimization can be tested.
 ## Status
 
 The dbt runtime and Trino connection are verified. DBT-001 through DBT-007 are
-accepted. The first full-build mart is being implemented; remaining physical
-modeling decisions stay open until they are reviewed together.
+accepted. The first full-build mart was implemented and live-verified on
+2026-08-28: the one-day slice produces 96 current delivery facts and 582
+source-knowledge history windows, and its 78 intermediate/mart tests pass.
+Remaining physical modeling decisions stay open until they are reviewed
+together. The original workshop questions above are unchanged.

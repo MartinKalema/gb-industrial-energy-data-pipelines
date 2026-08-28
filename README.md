@@ -10,11 +10,13 @@ The grain, dimensions, facts, metric contracts, and expected-result scenarios
 are accepted. Phase 2 now has executable source contracts, a deterministic
 fictional-data generator, and an implemented bounded Airflow path from
 immutable R2 evidence through validation/quarantine into typed Iceberg source
-tables. A real R2/Trino/Iceberg run and exact replay passed on 2026-08-28; the physical
-dbt dimensional schema remains the next modeling boundary. The first mart answers delivery, SLA,
-contractual availability, and earned-revenue questions. Charging cost and
-carbon are explicitly deferred rather than inferred from unrelated public
-electricity data.
+tables. A real R2/Trino/Iceberg run and exact replay passed on 2026-08-28. The
+first dbt dimensional mart is also implemented: it produces 96 current
+delivery-point/half-hour facts and 582 source-knowledge history windows for the
+verified one-day slice. The mart answers delivery, SLA, contractual
+availability, and earned-revenue questions. Charging cost and carbon are
+explicitly deferred rather than inferred from unrelated public electricity
+data.
 
 ## Why this project
 
@@ -48,7 +50,7 @@ BATCH (implemented synthetic-source boundary)
 Airflow -> deterministic source generator -> immutable raw R2 objects
         -> validation -> accepted / quarantine objects on R2
         -> local Trino -> typed Iceberg source tables on R2
-        -> dbt -> dimensional marts (next boundary)
+        -> dbt -> current and source-knowledge dimensional marts on R2
 
 STREAM
 Elexon IRIS AMQP ----> local bridge ----\
@@ -95,11 +97,11 @@ The public source APIs also remain remote.
 | Primary finite SQL engine | Accepted: Trino; not part of streaming |
 | Stream processing | Accepted: Spark Structured Streaming only |
 | Event broker | Redpanda (Kafka-compatible), provisional |
-| Dimensional model | Phase 1 logical model and all 3 expected-result specifications accepted; physical schema pending |
+| Dimensional model | Phase 1 logical model accepted; full-rebuild dbt current/history mart implemented and live-verified |
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
 | Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
-| Current implementation phase | Phase 2 batch vertical slice — verify the bounded source load, then build the dbt dimensional boundary |
+| Current implementation phase | Phase 2 batch vertical slice — source load and dimensional mart implemented; orchestration and presentation remain |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 
@@ -121,6 +123,9 @@ The Phase 2 source layer is executable; see the
 
 The bounded batch pipeline is documented in the
 [Airflow-to-R2-and-Iceberg architecture and runbook](docs/architecture/bounded-airflow-r2-iceberg-pipeline.md).
+
+The first dimensional mart is documented in the
+[steam-delivery dbt architecture and runbook](docs/architecture/steam-delivery-dbt-dimensional-mart.md).
 
 ## Secrets
 

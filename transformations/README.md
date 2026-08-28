@@ -23,7 +23,31 @@ Model layers:
 - `staging/` — revision-preserving views with explicit columns. They retain
   source types, nullable values, source revisions, and all eight raw-evidence
   lineage fields without filtering, deduplication, ranking, or cleanup.
-- `intermediate/` — reusable reconciliation and integration logic
-- `marts/` — dimensional products and shared metric inputs agreed in workshops
+- `intermediate/` — current-revision selection, coverage-driven interval spines,
+  event-time integration, shared calculations, and source-knowledge windows.
+- `marts/` — eight logical dimensions, five revision-audit companions, the
+  30-minute current delivery fact, and its source-knowledge history.
 
-dbt is not the streaming engine. Spark commits validated streaming micro-batches to Iceberg; dbt incremental models run on a finite cadence when a governed mart needs refresh.
+Build the complete project after the bounded Airflow source DAG succeeds:
+
+```bash
+uv run dbt build \
+  --project-dir transformations \
+  --profiles-dir transformations \
+  --no-populate-cache
+```
+
+The R2 catalog currently needs `--no-populate-cache` to avoid eager list-view
+introspection; model creation and data tests still run normally. The local
+profile uses one dbt thread to avoid concurrent metadata bursts against the R2
+Data Catalog beta. Airflow does not yet invoke dbt automatically.
+
+The first mart is a deliberate full-rebuild correctness baseline. Growing data
+does not by itself justify incremental models; a later measured optimization
+must produce the same results and include both neighbors of a corrected meter
+boundary.
+
+dbt is not the streaming engine. Spark commits validated streaming
+micro-batches to Iceberg; dbt submits finite SQL through Trino after committed
+snapshots are available. See the
+[dimensional-mart architecture and runbook](../docs/architecture/steam-delivery-dbt-dimensional-mart.md).
