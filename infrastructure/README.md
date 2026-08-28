@@ -7,7 +7,7 @@ Iceberg catalog. There is no MinIO or other local object-store service.
 The current Compose profiles are:
 
 - `query`: local Trino connected to the Cloudflare R2 Data Catalog;
-- `batch`: local Trino plus Airflow standalone for the bounded batch DAG;
+- `batch`: local Trino plus Airflow standalone for the date-range data pipeline;
 - `stream`: the Spark Structured Streaming feasibility service; and
 - `smoke`: the same Spark service used by the cross-engine smoke test.
 
@@ -64,7 +64,10 @@ task output is written to the Airflow state volume and durable evidence is
 written to R2.
 
 The bounded DAG is manual, accepts no more than 31 inclusive dates by default,
-and writes accepted source revisions through Trino to typed Iceberg tables.
+writes accepted source revisions through Trino to typed Iceberg tables, and
+then builds and tests the dimensional marts in six restartable dbt sections
+after coverage publication. If one section fails, Airflow retries that section
+without repeating the earlier successful dbt work.
 See the [pipeline runbook](../docs/architecture/bounded-airflow-r2-iceberg-pipeline.md)
 for the exact contract, R2 object prefixes, retry behavior, and recovery steps.
 

@@ -39,6 +39,19 @@ airflow:
     TRINO_URL: http://trino:8080
     TRINO_USER: airflow
     TRINO_QUERY_TIMEOUT_SECONDS: "300"
+    DBT_PROFILES_DIR: /opt/industrial-energy/transformations
+    DBT_PROJECT_DIR: /opt/industrial-energy/transformations
+    DBT_LOG_PATH: /opt/airflow/dbt/logs
+    DBT_TARGET_PATH: /opt/airflow/dbt/target
+    DBT_EXECUTABLE: /home/airflow/.local/bin/dbt
+    DBT_TARGET: dev
+    DBT_BUILD_TIMEOUT_SECONDS: "7200"
+    DBT_TRINO_CLEANUP_TIMEOUT_SECONDS: "60"
+    DBT_TRINO_HOST: trino
+    DBT_TRINO_PORT: "8080"
+    DBT_TRINO_USER: airflow
+    DBT_TRINO_CATALOG: r2
+    DBT_TRINO_SCHEMA: industrial_energy
     ICEBERG_CATALOG: r2
     ICEBERG_VALIDATED_SCHEMA: industrial_energy_validated
     TRINO_INSERT_BATCH_SIZE: "100"
@@ -69,9 +82,11 @@ volume. None of them belong in Git. The R2 values come from the ignored root
 `.env`; the image contains no credentials.
 
 The startup wrapper migrates the local metadata database and idempotently
-creates the one-slot `iceberg_writer` pool before Airflow starts. The Iceberg
-load task uses that pool so future writers have one shared serialization
-boundary rather than relying only on one DAG's `max_active_runs` setting.
+creates the one-slot `iceberg_writer` pool before Airflow starts. The source
+load, coverage publication, and six dbt tasks use that pool so all in-DAG
+Trino writers share one serialization boundary rather than relying only on one
+DAG's `max_active_runs` setting. A standalone host-side dbt command is outside
+that pool and must not run concurrently with any Airflow dbt task.
 
 The health endpoint above is Airflow's public API health check. If port `8080`
 is already used by Trino, the default host-side Airflow port is `8081`.
@@ -96,15 +111,58 @@ docker compose --project-directory . -f infrastructure/compose.yaml \
 ```
 
 Open `http://127.0.0.1:8081`, sign in as `admin`, and manually trigger
-`industrial_energy_bounded_batch`. Supply an inclusive local operating-date
+`steam_delivery_data_pipeline`. Supply an inclusive local operating-date
 range on or after `2026-08-26`, the fixed project seed `20260828`, and a fixed
 UTC generation timestamp. Reuse the seed across dates; it identifies one
 continuous fictional meter timeline and is not a per-run random value.
+
+The Grid view shows 13 ordered tasks: seven source/control tasks followed by
+six dbt tasks. The dbt sequence prepares and tests loaded data (9 models and
+235 tests), prepares and tests delivery calculations (33 models and 8 tests),
+builds the current fact, builds the history fact, builds 13 dimension tables,
+and runs 70 final mart tests. Dimensions follow the facts because
+`dim_data_status` reads both facts on a clean catalog.
+
+Each dbt task streams its own model or test output into its Airflow log and
+stores `run_results.json` plus `dbt.log` below `/opt/airflow/dbt` in a distinct
+folder for each checkpoint and Airflow try. Its XCom contains only compact
+invocation and result counts. If one section fails, Airflow retries only that
+section; the earlier green tasks stay successful.
+Clearing the failed task inside that same DAG run keeps those earlier task
+states. Triggering a separate new DAG run starts the complete sequence again.
+
+Every dbt task has a 120-minute subprocess limit inside a 125-minute Airflow
+task limit. The complete DAG still has a 180-minute limit, so an automatic
+retry runs only while enough whole-run time remains. The dbt child receives
+only the local Trino/dbt settings and basic process environment; it does not
+inherit the Airflow container's R2 access key or secret. Each Airflow try gives
+its Trino queries an exact task-and-attempt tag. If dbt times out, exits with an
+error, or is interrupted, Airflow stops the local process group, cancels only
+active queries with that user and tag, and waits until Trino reports no active
+match. If Trino cannot confirm that cleanup, the failed task does not retry
+automatically because a retry could overlap unfinished work; verify Trino first
+and rerun that task manually.
 
 `plan_run_from_airflow()` rejects a date before the synthetic timeline, an end
 date before the start date, and ranges longer than `PIPELINE_MAX_BATCH_DAYS`,
 so neither a UI mistake nor an API call can turn this DAG into an unbounded
 historical load.
+
+## Retired DAG-name cleanup
+
+The earlier local-only DAG ID `industrial_energy_bounded_batch` was replaced by
+the clearer `steam_delivery_data_pipeline`. An existing Airflow volume may
+retain the old run history even though its Python file is gone. After confirming
+the new DAG appears, remove only that retired metadata with:
+
+```bash
+docker compose --project-directory . -f infrastructure/compose.yaml \
+  exec airflow airflow dags delete industrial_energy_bounded_batch --yes
+```
+
+This removes the retired DAG's local Airflow task/run history. It does not
+delete raw R2 evidence, Iceberg source tables, coverage rows, or dimensional
+marts.
 
 ## Authentication reset
 

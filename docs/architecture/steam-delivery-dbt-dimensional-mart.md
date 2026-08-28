@@ -158,10 +158,48 @@ development engine and must be reconsidered with greater data or concurrency.
 The dbt profile also uses one thread so catalog metadata requests remain serial
 against the R2 Data Catalog beta.
 
-The source Airflow DAG currently stops after publishing successful batch
-coverage. Run dbt separately after that DAG succeeds. Adding a downstream dbt
-task to Airflow is a later orchestration decision, not an implicit part of the
-current DAG.
+After successful source reconciliation and coverage publication, the bounded
+Airflow DAG divides the dbt work into these six ordered restart points:
+
+| Airflow task | Command boundary | Expected result |
+|---|---|---|
+| `prepare_and_test_loaded_data_with_dbt` | Build `models/staging` with cautious test selection | 9 models and 235 tests |
+| `prepare_and_test_delivery_calculations_with_dbt` | Build `models/intermediate` with cautious test selection | 33 models and 8 tests |
+| `build_current_delivery_fact_with_dbt` | Run the current delivery fact | 1 model |
+| `build_delivery_history_fact_with_dbt` | Run the source-knowledge history fact | 1 model |
+| `build_dimension_tables_with_dbt` | Run the dimension models after both facts | 13 models |
+| `test_complete_dimensional_mart_with_dbt` | Test the mart plus the two reconciliation fixtures | 70 tests |
+
+"Cautious test selection" means dbt runs a test in that section only when all
+the models the test needs are available there. It prevents an early task from
+pulling a later mart model into its work. The dimensions follow both facts
+because `dim_data_status` reads their observed status combinations; placing the
+dimension section first would fail when the mart schema starts empty.
+
+Every dbt task uses the one-slot `iceberg_writer` pool, one dbt thread, and
+`--no-populate-cache`. Its dbt subprocess may run for up to 120 minutes inside
+a 125-minute Airflow task limit. The extra five minutes leave time for local
+process cleanup, Trino cleanup, and scheduler margin. The complete DAG still
+has a 180-minute limit, so an automatic retry is conditional on the whole run
+having time left. Each checkpoint and try has separate log and target
+artifacts. Timeout cleanup stops only that dbt process group and only the Trino
+queries tagged for that task attempt before the writer pool is released.
+
+This split changes recovery in a practical way. If, for example, the history
+fact fails, Airflow retries `build_delivery_history_fact_with_dbt`; it does not
+rebuild the staging views, calculations, or current fact. The dimension task
+waits until the history fact succeeds. Earlier successful checkpoints stay
+green and their relations stay available. The standalone all-project command
+above remains useful for development and recovery diagnostics, but must not run
+concurrently with an Airflow dbt task.
+
+Coverage and mart readiness remain separate facts: a coverage row proves the
+source run reconciled, while the dimensional mart is certified only after
+`test_complete_dimensional_mart_with_dbt` succeeds. dbt replaces relations
+individually rather than committing the whole project in one transaction, so a
+failed checkpoint can temporarily leave a mixed set of relations inside that
+section. Retrying the failed checkpoint converges it; consumers must not treat
+a failed final test task as a certified mart refresh.
 
 ## Inspect the result
 

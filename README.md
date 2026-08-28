@@ -8,15 +8,20 @@ British industrial sites. The platform will answer one central question:
 The project completed its first dimensional-modeling workshop on 2026-08-27.
 The grain, dimensions, facts, metric contracts, and expected-result scenarios
 are accepted. Phase 2 now has executable source contracts, a deterministic
-fictional-data generator, and an implemented bounded Airflow path from
-immutable R2 evidence through validation/quarantine into typed Iceberg source
-tables. A real R2/Trino/Iceberg run and exact replay passed on 2026-08-28. The
-first dbt dimensional mart is also implemented: it produces 96 current
+fictional-data generator, and an Airflow path that saves the original files in
+R2, checks every row, saves failed rows separately, and loads accepted rows
+into typed Iceberg tables. A real R2/Trino/Iceberg run and exact replay passed
+on 2026-08-28. The first dbt dimensional mart is also implemented: it produces
+96 current
 delivery-point/half-hour facts and 582 source-knowledge history windows for the
 verified one-day slice. The mart answers delivery, SLA, contractual
 availability, and earned-revenue questions. Charging cost and carbon are
 explicitly deferred rather than inferred from unrelated public electricity
-data.
+data. After its seven source/control tasks, the date-range Airflow pipeline now
+runs six smaller dbt tasks. These prepare and test the loaded data and delivery
+calculations, build the two facts and dimensions, and then test the complete
+dimensional mart. If one dbt task fails, Airflow retries that task without
+repeating the earlier successful dbt tasks.
 
 ## Why this project
 
@@ -46,9 +51,9 @@ One coherent product can demonstrate:
 ## Local-first architecture
 
 ```text
-BATCH (implemented synthetic-source boundary)
-Airflow -> deterministic source generator -> immutable raw R2 objects
-        -> validation -> accepted / quarantine objects on R2
+BATCH (implemented date-range pipeline)
+Airflow -> deterministic source generator -> original files in R2
+        -> row checks -> accepted files / failed rows saved separately in R2
         -> local Trino -> typed Iceberg source tables on R2
         -> dbt -> current and source-knowledge dimensional marts on R2
 
@@ -101,7 +106,7 @@ The public source APIs also remain remote.
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
 | Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
-| Current implementation phase | Phase 2 batch vertical slice — source load and dimensional mart implemented; orchestration and presentation remain |
+| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, and restartable coverage-to-dbt orchestration implemented; presentation and FUELHH remain |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 

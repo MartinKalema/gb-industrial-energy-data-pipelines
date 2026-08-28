@@ -66,6 +66,6 @@ airflow db migrate
 airflow pools set \
     iceberg_writer \
     1 \
-    "Serialize every Trino writer to the shared Iceberg source tables"
+    "Serialize Trino writes to the shared Iceberg source and mart tables"
 
 exec airflow standalone

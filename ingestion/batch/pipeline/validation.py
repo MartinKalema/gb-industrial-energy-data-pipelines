@@ -1,4 +1,4 @@
-"""Deterministic validation and quarantine for a bounded source bundle.
+"""Deterministic validation and quarantine for bounded generated source files.
 
 The module deliberately has no Airflow, Spark, Iceberg, or R2 dependency.  It
 accepts already-downloaded JSON Lines files, validates them against the Phase 2
@@ -1355,7 +1355,9 @@ def validate_bundle(
 
     source_dir = source_dir.expanduser().resolve()
     if not source_dir.is_dir():
-        raise NotADirectoryError(f"source bundle directory does not exist: {source_dir}")
+        raise NotADirectoryError(
+            f"generated source-files directory does not exist: {source_dir}"
+        )
 
     candidates: list[_Candidate] = []
     bundle_issues: list[ValidationIssue] = []

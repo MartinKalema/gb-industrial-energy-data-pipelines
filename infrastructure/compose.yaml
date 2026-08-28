@@ -51,8 +51,13 @@ services:
       TRINO_USER: airflow
       TRINO_QUERY_TIMEOUT_SECONDS: "300"
       DBT_PROFILES_DIR: /opt/industrial-energy/transformations
+      DBT_PROJECT_DIR: /opt/industrial-energy/transformations
       DBT_LOG_PATH: /opt/airflow/dbt/logs
       DBT_TARGET_PATH: /opt/airflow/dbt/target
+      DBT_EXECUTABLE: /home/airflow/.local/bin/dbt
+      DBT_TARGET: dev
+      DBT_BUILD_TIMEOUT_SECONDS: "7200"
+      DBT_TRINO_CLEANUP_TIMEOUT_SECONDS: "60"
       DBT_TRINO_HOST: trino
       DBT_TRINO_PORT: "8080"
       DBT_TRINO_USER: airflow
