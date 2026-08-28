@@ -52,5 +52,10 @@ Their machine-readable schemas, deterministic fixtures, and verification are
 described in the
 [Phase 2 source implementation handoff](../architecture/phase-2-source-implementation.md).
 
+The physical dimensional implementation continues in the
+[Phase 2 dbt physical-model workshop](10-phase-2-dbt-physical-model-workshop.md).
+Its accepted implementation choices are recorded separately in the
+[dbt physical decision log](dbt-physical-decision-log.md).
+
 Begin with [Workshop 1](01-business-process-workshop.md) and record accepted
 decisions in [the decision log](decision-log.md).
