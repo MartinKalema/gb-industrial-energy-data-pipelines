@@ -584,3 +584,49 @@ def reconcile_run(
     result = {**summary, "reconciliation_artifact": artifact}
     _write_json_atomic(Path(plan.work_dir) / "reconciliation-result.json", result)
     return result
+
+
+def publish_batch_run_coverage(
+    plan_value: Mapping[str, Any],
+    raw_result_value: Mapping[str, Any],
+    reconciliation_result_value: Mapping[str, Any],
+    *,
+    statement_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Publish one successful-run coverage declaration to the Iceberg control table.
+
+    The returned dictionary contains only the run identity, relation, canonical
+    hash, and create/reuse disposition.  Row content remains in Iceberg rather
+    than travelling through Airflow XCom.
+    """
+
+    from .coverage_control import (
+        BatchRunCoverage,
+        BatchRunCoveragePublisher,
+        CoveragePublisherConfig,
+    )
+
+    plan = RunPlan.from_mapping(_require_mapping(plan_value, "plan"))
+    raw_result = _require_mapping(raw_result_value, "raw_result")
+    reconciliation_result = _require_mapping(
+        reconciliation_result_value, "reconciliation_result"
+    )
+    coverage = BatchRunCoverage.from_workflow(
+        plan,
+        raw_result,
+        reconciliation_result,
+    )
+    publisher = BatchRunCoveragePublisher(
+        CoveragePublisherConfig(
+            trino_endpoint=plan.trino_url,
+            catalog=plan.iceberg_catalog,
+            trino_user=os.environ.get("TRINO_USER", "airflow"),
+            query_timeout_seconds=float(
+                os.environ.get("TRINO_QUERY_TIMEOUT_SECONDS", "300")
+            ),
+        ),
+        statement_runner=statement_runner,
+    )
+    result = publisher.publish(coverage).to_dict()
+    _write_json_atomic(Path(plan.work_dir) / "coverage-publication-result.json", result)
+    return result

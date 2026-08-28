@@ -137,6 +137,7 @@ Airflow on this computer
   6. send bounded SQL statements to local Trino
   7. Trino commits accepted rows to Iceberg tables stored on R2
   8. reconcile counts and write the summary to R2
+  9. publish the successfully reconciled local-date coverage to Iceberg
 
 Remote managed services
   Cloudflare R2 object storage + Cloudflare R2 Data Catalog
@@ -313,9 +314,10 @@ revision so the evidence history remains auditable.
 
 ## Observability and reconciliation
 
-Airflow shows task state, duration, retry count, and logs for the six stages:
-plan, generate, raw landing, validation/quarantine, Iceberg load, and
-reconciliation. Small task summaries include hashes, locations, and counts.
+Airflow shows task state, duration, retry count, and logs for the seven stages:
+plan, generate, raw landing, validation/quarantine, Iceberg load,
+reconciliation, and successful-run coverage publication. Small task summaries
+include hashes, locations, and counts.
 
 The validation report records total and per-dataset accepted, quarantined, and
 exact-replay counts; quarantine-reason counts; accepted row identities/hashes;
@@ -323,7 +325,7 @@ and hashes/counts for every accepted and quarantine output file. Each dataset
 load records input rows, planned new rows, inserted rows, exact replays,
 conflicts, chunks, and warnings.
 
-The final task enforces both equations:
+The reconciliation task enforces both equations:
 
 ```text
 raw records = accepted records + quarantined records + duplicate replay records
@@ -337,6 +339,16 @@ ID, raw, validation, duplicate, insert/reuse, and table counts. The attempt key
 uses a safe SHA-256 prefix of the Airflow run ID. Each summary is the compact
 proof that one execution accounted for every raw row without forcing a first
 insert and a later exact replay to claim the same immutable object key.
+
+Only after that proof succeeds, the final task inserts one row into
+`r2.industrial_energy_control.batch_run_coverage`. The row records the
+inclusive `Europe/London` dates, generator and raw-manifest identity, balanced
+counts, reconciliation status, and first successful attempt artifact. Its
+canonical hash excludes attempt-specific Airflow and reconciliation-artifact
+fields, and represents inserted plus replayed Iceberg rows as one reconciled
+count. Therefore an exact replay reuses the first row, while the same
+`pipeline_run_id` with changed stable coverage content fails as an immutable
+payload conflict.
 
 ## Scale trade-offs and revisit triggers
 
