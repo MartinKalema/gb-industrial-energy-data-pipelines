@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract_terms.schema.json",
+  "title": "Effective contract-terms revision",
+  "description": "PSC-007: one published revision of one effective commercial-terms episode for a contract and delivery point.",
+  "$comment": "The validation layer enforces effective-period ordering, non-overlap, full-interval coverage, timestamp ordering, and customer consistency with PSC-004.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "contract_natural_id",
+    "contract_terms_version_id",
+    "delivery_point_natural_id",
+    "customer_natural_id",
+    "effective_from_utc",
+    "effective_to_utc",
+    "energy_rate_gbp_per_mwh_th",
+    "sla_penalty_rate_gbp_per_mwh_th",
+    "currency_code",
+    "rate_unit",
+    "source_revision",
+    "revision_type",
+    "terms_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "contract_terms"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "contract_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "contract_terms_version_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "customer_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "effective_from_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "effective_to_utc": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "energy_rate_gbp_per_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_18_6_nonnegative"
+    },
+    "sla_penalty_rate_gbp_per_mwh_th": {
+      "$ref": "common.schema.json#/$defs/decimal_18_6_nonnegative"
+    },
+    "currency_code": {
+      "const": "GBP"
+    },
+    "rate_unit": {
+      "const": "GBP/MWh_th"
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "amendment",
+        "correction",
+        "retroactive_amendment",
+        "withdrawal"
+      ]
+    },
+    "terms_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "withdrawn"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "changed_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "change_reason_code": {
+      "type": "string",
+      "enum": [
+        "commercial_renegotiation",
+        "source_error",
+        "effective_period_correction",
+        "approved_retroactive_agreement",
+        "terms_withdrawn"
+      ]
+    },
+    "change_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    },
+    "agreement_reference": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "retroactive_amendment",
+              "withdrawal"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "changed_at_utc",
+          "change_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "retroactive_amendment"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "agreement_reference"
+        ],
+        "properties": {
+          "change_reason_code": {
+            "const": "approved_retroactive_agreement"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "withdrawal"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "terms_status": {
+            "const": "withdrawn"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "terms_status": {
+            "const": "active"
+          }
+        }
+      }
+    }
+  ]
+}

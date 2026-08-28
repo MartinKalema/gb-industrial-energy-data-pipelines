@@ -1,0 +1,3 @@
+{"event_id":"smoke-event-001","written_by":"spark","sequence_number":1,"note":"first checkpointed event"}
+{"event_id":"smoke-event-002","written_by":"spark","sequence_number":2,"note":"second checkpointed event"}
+{"event_id":"smoke-event-003","written_by":"spark","sequence_number":3,"note":"third checkpointed event"}

@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "revenue_meter_assignment.schema.json",
+  "title": "Effective revenue-meter assignment revision",
+  "description": "PSC-003: one published revision of one effective meter/register assignment episode.",
+  "$comment": "The validation layer compares effective_from_utc with effective_to_utc and enforces cross-record non-overlap and one authoritative assignment per interval.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "meter_assignment_id",
+    "meter_natural_id",
+    "register_natural_id",
+    "delivery_point_natural_id",
+    "assignment_role",
+    "register_type",
+    "native_unit",
+    "calibration_id",
+    "maximum_plausible_30_min_change",
+    "effective_from_utc",
+    "effective_to_utc",
+    "source_revision",
+    "revision_type",
+    "assignment_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "revenue_meter_assignment"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "meter_assignment_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "meter_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "register_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "delivery_point_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "assignment_role": {
+      "type": "string",
+      "enum": [
+        "authoritative_revenue",
+        "supporting_evidence"
+      ]
+    },
+    "register_type": {
+      "type": "string",
+      "enum": [
+        "thermal_energy",
+        "steam_mass"
+      ]
+    },
+    "native_unit": {
+      "$ref": "common.schema.json#/$defs/thermal_or_mass_unit"
+    },
+    "calibration_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "maximum_plausible_30_min_change": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_positive"
+    },
+    "effective_from_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "effective_to_utc": {
+      "oneOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "correction",
+        "cancellation"
+      ]
+    },
+    "assignment_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "cancelled"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "effective_period_correction",
+        "relationship_correction",
+        "assignment_cancelled"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "cancellation"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "cancellation"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "assignment_status": {
+            "const": "cancelled"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "assignment_status": {
+            "const": "active"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "register_type": {
+            "const": "thermal_energy"
+          }
+        },
+        "required": [
+          "register_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "native_unit": {
+            "enum": [
+              "MWh_th",
+              "kWh_th",
+              "GJ_th"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "register_type": {
+            "const": "steam_mass"
+          }
+        },
+        "required": [
+          "register_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "native_unit": {
+            "const": "t"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "assignment_role": {
+            "const": "authoritative_revenue"
+          }
+        },
+        "required": [
+          "assignment_role"
+        ]
+      },
+      "then": {
+        "properties": {
+          "register_type": {
+            "const": "thermal_energy"
+          }
+        }
+      }
+    }
+  ]
+}

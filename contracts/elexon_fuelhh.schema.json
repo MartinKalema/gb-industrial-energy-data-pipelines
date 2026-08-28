@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "elexon_fuelhh.schema.json",
+  "title": "Normalized Elexon FUELHH published observation",
+  "description": "PSC-011: one published average GB electricity-generation observation for one fuel type and settlement interval. This sidecar is not an input to the steam-delivery fact.",
+  "$comment": "The validation layer checks settlement_date and settlement_period against start_time_utc and the GB 46/48/50-period settlement calendar.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "dataset",
+    "publish_time_utc",
+    "start_time_utc",
+    "settlement_date",
+    "settlement_period",
+    "fuel_type",
+    "generation_mw",
+    "power_unit"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "elexon_fuelhh"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "dataset": {
+      "const": "FUELHH"
+    },
+    "publish_time_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "start_time_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "settlement_date": {
+      "$ref": "common.schema.json#/$defs/iso_date"
+    },
+    "settlement_period": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    },
+    "fuel_type": {
+      "type": "string",
+      "description": "Controlled FUELHH codes observed from Elexon's official API. Newly introduced codes remain in raw evidence and fail validated ingestion pending review.",
+      "enum": [
+        "BIOMASS",
+        "CCGT",
+        "COAL",
+        "INTELEC",
+        "INTEW",
+        "INTFR",
+        "INTGRNL",
+        "INTIFA2",
+        "INTIRL",
+        "INTNED",
+        "INTNEM",
+        "INTNSL",
+        "INTVKL",
+        "NPSHYD",
+        "NUCLEAR",
+        "OCGT",
+        "OIL",
+        "OTHER",
+        "PS",
+        "WIND"
+      ]
+    },
+    "generation_mw": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_signed"
+    },
+    "power_unit": {
+      "const": "MW"
+    }
+  }
+}

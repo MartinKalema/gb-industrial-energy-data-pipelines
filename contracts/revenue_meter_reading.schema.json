@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "revenue_meter_reading.schema.json",
+  "title": "Cumulative revenue-meter reading revision",
+  "description": "PSC-002: one published revision of one cumulative register reading at one scheduled 30-minute UTC boundary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_schema_id",
+    "source_schema_version",
+    "source_system_id",
+    "source_reading_revision_id",
+    "meter_natural_id",
+    "register_natural_id",
+    "reading_at_utc",
+    "source_revision",
+    "revision_type",
+    "reading_status",
+    "published_at_utc",
+    "approval_state",
+    "synthetic_data"
+  ],
+  "properties": {
+    "source_schema_id": {
+      "const": "revenue_meter_reading"
+    },
+    "source_schema_version": {
+      "const": "1.0.0"
+    },
+    "source_system_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "synthetic_data": {
+      "const": true
+    },
+    "source_reading_revision_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "meter_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "register_natural_id": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "reading_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_half_hour_boundary"
+    },
+    "register_type": {
+      "type": "string",
+      "enum": [
+        "thermal_energy",
+        "steam_mass"
+      ]
+    },
+    "cumulative_value": {
+      "$ref": "common.schema.json#/$defs/decimal_20_6_nonnegative"
+    },
+    "native_unit": {
+      "$ref": "common.schema.json#/$defs/thermal_or_mass_unit"
+    },
+    "reading_method": {
+      "type": "string",
+      "enum": [
+        "actual",
+        "estimated",
+        "substituted"
+      ]
+    },
+    "source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "revision_type": {
+      "type": "string",
+      "enum": [
+        "original",
+        "correction",
+        "reconciliation",
+        "withdrawal"
+      ]
+    },
+    "reading_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "withdrawn"
+      ]
+    },
+    "published_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approval_state": {
+      "$ref": "common.schema.json#/$defs/approval_state"
+    },
+    "approved_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "approved_by": {
+      "$ref": "common.schema.json#/$defs/identifier"
+    },
+    "supersedes_source_revision": {
+      "$ref": "common.schema.json#/$defs/positive_revision"
+    },
+    "corrected_at_utc": {
+      "$ref": "common.schema.json#/$defs/utc_timestamp"
+    },
+    "correction_reason_code": {
+      "type": "string",
+      "enum": [
+        "source_error",
+        "meter_data_reconciliation",
+        "quality_review",
+        "withdrawn_by_source"
+      ]
+    },
+    "correction_note": {
+      "$ref": "common.schema.json#/$defs/reason_text"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "approval_state"
+        ]
+      },
+      "then": {
+        "required": [
+          "approved_at_utc",
+          "approved_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "enum": [
+              "correction",
+              "reconciliation",
+              "withdrawal"
+            ]
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "supersedes_source_revision",
+          "corrected_at_utc",
+          "correction_reason_code",
+          "approved_at_utc",
+          "approved_by"
+        ],
+        "properties": {
+          "approval_state": {
+            "const": "approved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revision_type": {
+            "const": "withdrawal"
+          }
+        },
+        "required": [
+          "revision_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "reading_status": {
+            "const": "withdrawn"
+          },
+          "register_type": false,
+          "cumulative_value": false,
+          "native_unit": false,
+          "reading_method": false
+        }
+      },
+      "else": {
+        "required": [
+          "register_type",
+          "cumulative_value",
+          "native_unit",
+          "reading_method"
+        ],
+        "properties": {
+          "reading_status": {
+            "const": "active"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "register_type": {
+            "const": "thermal_energy"
+          }
+        },
+        "required": [
+          "register_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "native_unit": {
+            "enum": [
+              "MWh_th",
+              "kWh_th",
+              "GJ_th"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "register_type": {
+            "const": "steam_mass"
+          }
+        },
+        "required": [
+          "register_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "native_unit": {
+            "const": "t"
+          }
+        }
+      }
+    }
+  ]
+}
