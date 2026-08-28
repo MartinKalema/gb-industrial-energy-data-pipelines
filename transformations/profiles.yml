@@ -10,6 +10,9 @@ gb_industrial_energy:
       database: "{{ env_var('DBT_TRINO_CATALOG', 'r2') }}"
       schema: "{{ env_var('DBT_TRINO_SCHEMA', 'industrial_energy') }}"
       http_scheme: http
-      threads: 2
+      # Keep catalog operations serial against the local R2 Data Catalog beta.
+      # The history build is planning-heavy, and correctness is preferred over
+      # concurrent metadata bursts for this bounded development project.
+      threads: 1
       retries: 3
       timezone: UTC

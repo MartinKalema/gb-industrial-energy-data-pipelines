@@ -14,6 +14,7 @@ services:
     ports:
       - "127.0.0.1:${TRINO_PORT:-8080}:8080"
     volumes:
+      - ./infrastructure/trino/config.properties:/etc/trino/config.properties:ro
       - ./infrastructure/trino/catalog:/etc/trino/catalog:ro
       - ./tests/smoke:/opt/industrial-energy/smoke:ro
     healthcheck:

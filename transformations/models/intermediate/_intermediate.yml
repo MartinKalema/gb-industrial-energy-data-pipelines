@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: int_delivery_interval_spine
+    description: >-
+      One row per delivery point and real UTC half-hour covered by a successful
+      batch-control row. Local-date expansion uses the coverage timezone, so
+      daylight-saving dates contain their actual 46, 48, or 50 intervals.
+    columns:
+      - name: delivery_interval_key
+        description: Deterministic SHA-256 key for delivery point and interval start.
+        data_tests: [not_null, unique]
+      - name: interval_start_utc
+        data_tests: [not_null]
+      - name: interval_end_utc
+        data_tests: [not_null]
+
+  - name: int_delivery_interval_history_spine
+    description: >-
+      Coverage-driven interval universe for every delivery point that was ever
+      authoritative for the event interval. It is intentionally independent of
+      the current-active assignment so a later cancellation closes history
+      without deleting the earlier as-known state.
+    columns:
+      - name: delivery_interval_key
+        data_tests: [not_null, unique]
+
+  - name: int_delivery_interval_boundaries
+    description: >-
+      Resolves exact opening and closing cumulative readings on the one
+      authoritative meter/register assignment, calculates the same-meter native
+      delta, and converts that delta to MWh_th only after physical validation.
+
+  - name: int_current_excess_order_by_interval
+    description: >-
+      Resolves the current pre-start excess-order authorization. No eligible order
+      and one cancelled order authorize exact zero; multiple eligible lines are
+      ambiguous and therefore remain null.
+
+  - name: int_steam_delivery_interval_calculations
+    description: >-
+      Shared current interval calculations. Missing business evidence stays null,
+      while explicit no-commitment, no-order, cancelled-order, and final-zero
+      capacity states retain their accepted zero semantics.
+
+  - name: int_customer_versions_knowledge_history
+    description: Source-knowledge windows for record-high approved customer revisions.
+  - name: int_site_versions_knowledge_history
+    description: Source-knowledge windows for record-high approved site revisions.
+  - name: int_delivery_point_assignments_knowledge_history
+    description: Source-knowledge windows for record-high approved delivery-point assignment revisions.
+  - name: int_meter_assignments_knowledge_history
+    description: Source-knowledge windows for record-high approved meter-assignment revisions.
+  - name: int_contract_terms_knowledge_history
+    description: Source-knowledge windows for record-high approved contract revisions.
+  - name: int_commitments_knowledge_history
+    description: Source-knowledge windows for record-high approved interval commitments.
+  - name: int_eligible_excess_orders_knowledge_history
+    description: >-
+      Source-knowledge windows for record-high approved order revisions whose
+      publication and approval both occurred before delivery started.
+  - name: int_meter_readings_knowledge_history
+    description: Source-knowledge windows for record-high approved meter-reading revisions.
+  - name: int_capacity_assessments_knowledge_history
+    description: >-
+      Source-knowledge windows for capacity evidence. Provisional evidence may be
+      visible before the first final/withdrawn state but can never displace that
+      official state, and late lower revisions never regain authority.
+
+  - name: int_delivery_interval_knowledge_change_points
+    description: >-
+      Relevant source knowledge times mapped to each covered delivery interval.
+      These times come only from max(published_at_utc, approved_at_utc), never from
+      Airflow execution, ingestion, or Iceberg commit time.
+
+  - name: int_steam_delivery_interval_history_windows
+    description: >-
+      Collapsed half-open source-knowledge windows at delivery-interval grain.
+      Consecutive snapshots with an identical resolved result state are removed.
+      Grain, required values, and window shape are tested on the materialized
+      history fact so each assertion does not independently re-expand the full
+      view-only source-knowledge graph.
