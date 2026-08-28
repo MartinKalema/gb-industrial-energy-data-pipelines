@@ -1,3 +1,5 @@
 apache-airflow==3.3.1
 boto3>=1.35,<2
+dbt-core==1.12.3
+dbt-trino==1.10.3
 jsonschema[format]>=4.23,<5
