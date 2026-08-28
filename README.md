@@ -1,0 +1,115 @@
+# Great Britain Industrial Thermal Battery Operations and Steam Delivery Intelligence Platform
+
+This portfolio project models a fictional operator of thermal batteries at
+British industrial sites. The platform will answer one central question:
+
+> Did each site meet its steam commitment, and what were the electricity-cost, carbon, availability, and revenue consequences of when it charged?
+
+The project completed its first dimensional-modeling workshop on 2026-08-27.
+The grain, dimensions, facts, metric contracts, and expected-result scenarios
+are accepted. Phase 2 now has executable source contracts and a deterministic
+fictional-data generator; the physical Iceberg/dbt dimensional schema remains
+the next implementation boundary. The first mart answers delivery, SLA,
+contractual availability, and earned-revenue questions. Charging cost and
+carbon are explicitly deferred rather than inferred from unrelated public
+electricity data.
+
+## Why this project
+
+One coherent product can demonstrate:
+
+- batch ingestion and genuine event streaming;
+- an R2-backed, Iceberg lakehouse queried by Spark and Trino;
+- Airflow orchestration and dbt transformations/tests;
+- industrial telemetry and time-series processing;
+- a Python API and TypeScript product interface;
+- governed metrics, tenant-aware security, and self-service workflows;
+- a grounded AI assistant with authorization and regression evaluations;
+- production practices such as observability, CI, data quality, and runbooks.
+
+## Proposed data strategy
+
+- **Real external batch sidecar:** Elexon FUELHH from the Insights REST API,
+  used to prove public-API ingestion and publication-aware replay without
+  entering the steam-delivery mart.
+- **Future streaming context:** Elexon IRIS AMQP can exercise the live external
+  path in Phase 3; it will remain separate unless a later business process
+  establishes a valid analytical relationship.
+- **Future carbon context:** a governed source and attribution method will be
+  chosen only when the charging-cost/carbon process is modeled.
+- **Synthetic private data:** thermal-battery telemetry, steam meters, customers, contracts, commitments, maintenance, and billing. These sources are synthetic because real industrial records are proprietary.
+
+## Proposed local-first architecture
+
+```text
+BATCH
+Airflow -> Elexon REST / IRIS archive -> raw R2 objects
+        -> Iceberg bronze -> Trino -> dbt -> dimensional marts
+
+STREAM
+Elexon IRIS AMQP ----> local bridge ----\
+                                         -> local Redpanda
+Live plant simulator -------------------/          |
+                                         Spark Structured Streaming
+                                                    |
+                                             Iceberg on R2
+
+QUERY (after Spark commits an Iceberg snapshot)
+Analyst / dbt / product API -> Trino -> Iceberg on R2
+```
+
+All compute services run locally. Cloudflare R2 and its managed Iceberg REST catalog remain remote storage/metadata services, and the public source APIs remain remote. A fully offline MinIO plus local-catalog profile can be added later if needed.
+
+## Repository map
+
+- `docs/discovery/` — business problem, source feasibility, scope, and requirements
+- `docs/modeling/` — our collaborative dimensional-modeling workshop and decisions
+- `docs/architecture/` — system design and job-capability coverage
+- `ingestion/batch/` — historical API ingestion and replay/backfill logic
+- `ingestion/stream/` — IRIS bridge, telemetry producer, and stream processing
+- `orchestration/` — Airflow DAGs for finite workflows and maintenance
+- `transformations/` — dbt project and governed analytical models
+- `apps/` — Python API and TypeScript web application
+- `ai/` — read-only assistant tools and proactive evaluation suite
+- `infrastructure/` — local Docker Compose and engine configuration
+
+## Current decisions
+
+| Decision | Status |
+|---|---|
+| Business problem | Accepted: steam commitments and charging consequences |
+| Energy domain | Accepted: industrial thermal batteries and steam delivery |
+| Market geography | Accepted: Great Britain |
+| Object storage | Cloudflare R2 |
+| Open table format | Accepted: Apache Iceberg |
+| Iceberg catalog | Active: Cloudflare R2 Data Catalog beta; Spark/Trino engine smoke tests passed |
+| Batch orchestration | Apache Airflow |
+| Primary finite SQL engine | Accepted: Trino; not part of streaming |
+| Stream processing | Accepted: Spark Structured Streaming only |
+| Event broker | Redpanda (Kafka-compatible), provisional |
+| Dimensional model | Phase 1 logical model and all 3 expected-result specifications accepted; physical schema pending |
+| Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
+| Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
+| Current implementation phase | Phase 2 batch vertical slice — raw R2/Iceberg ingestion next |
+
+Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
+
+Before configuring storage, follow the [safe R2 bootstrap](docs/architecture/r2-bootstrap.md).
+
+The first R2/Iceberg/Spark/Trino integration milestone has passed; see the
+[Phase 0 feasibility results](docs/architecture/phase-0-feasibility-results.md)
+and its [repeatable smoke tests](tests/smoke/README.md).
+
+The first logical dimensional-modeling phase is complete; see the
+[Phase 1 completion report](docs/modeling/07-phase-1-completion-report.md) for
+the accepted decisions, artifacts, reconciliation evidence, deferred scope, and
+Phase 2 implementation handoff.
+
+The Phase 2 source layer is executable; see the
+[source implementation handoff](docs/architecture/phase-2-source-implementation.md),
+[machine-readable contracts](contracts/README.md), and
+[synthetic generator](ingestion/batch/synthetic/README.md).
+
+## Secrets
+
+Never commit R2 or IRIS credentials. Copy `.env.example` to `.env` only on the local machine; `.env` and common secret paths are ignored by Git.
