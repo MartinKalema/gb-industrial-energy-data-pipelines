@@ -205,8 +205,42 @@ Hexadecimal SHA-256 keys occupy more storage than sequential integers, but they
 remain identical across full rebuilds, retries, and future batch/stream paths
 without a centralized sequence service.
 
+### DBT-005 — source-driven Type 2 dimension history
+
+Accepted on 2026-08-28:
+
+> Create one dimensional row for each genuine effective business version or
+> assignment episode, while collapsing source corrections into the latest
+> accepted representation of that same version or episode.
+
+Rules:
+
+- Build Type 2 history directly from source-owned version identifiers and
+  `effective_from_utc` / `effective_to_utc`; do not infer it from dbt run time.
+- Preserve separate dimension rows for genuine customer, site, contract,
+  delivery-point assignment, and meter-assignment versions or episodes.
+- Select the latest valid approved source revision within each stable business
+  version or assignment identity before building its current accepted
+  dimension row.
+- Do not create another dimension row merely because a correction increases
+  `source_revision`. The deterministic dimension key remains unchanged for
+  that corrected version.
+- Retain `effective_from_utc`, `effective_to_utc`, and an `is_current` flag on
+  effective-dated dimensions. Facts resolve the version covering their full
+  event-time interval.
+- Keep every earlier source revision queryable in staging and knowledge-time
+  history even though it is not another business-history dimension row.
+- Do not use dbt snapshots for these dimensions. Snapshot observation time is
+  not a substitute for authoritative business effective time or source
+  publication time.
+- Date, interval, and data-status dimensions do not use Type 2 history.
+
+This representation prevents a correction from inventing a business era while
+still preserving genuine historical changes. A separate knowledge-time model
+is required to reproduce the description that was known before a correction.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 through DBT-004 are accepted;
+The dbt runtime and Trino connection are verified. DBT-001 through DBT-005 are accepted;
 remaining physical modeling decisions are being reviewed one at a time before
 the mart SQL is implemented.
