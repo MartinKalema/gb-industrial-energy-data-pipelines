@@ -54,8 +54,16 @@ and executable fixtures begin in Phase 2.
 business-source contracts and the separate Elexon FUELHH external-batch
 sidecar contract are accepted. Twelve Draft 2020-12 schemas, the deterministic
 nine-source JSONL generator, its manifest, and executable contract/scenario
-tests are implemented. The next boundary is raw R2 evidence and validated
-Iceberg ingestion.
+tests are implemented.
+
+**Bounded source-load milestone:** implemented and verified on 2026-08-28. The
+manual Airflow DAG plans a maximum 31-day range,
+generates the nine sources, writes immutable raw evidence to R2, validates and
+quarantines rows, loads accepted revisions through Trino into typed Iceberg
+source tables, and reconciles raw-to-Iceberg counts. The real first run inserted
+313 accepted rows into nine tables with zero quarantine/conflicts; the exact
+replay reused every R2 artifact and all 313 Iceberg identities without an
+insert or conflict.
 
 - Resolve and record the Phase 2 source-contract entry decisions for deliverable
   capacity, shared-capacity allocation, commitment/contract revisions, and
@@ -76,6 +84,8 @@ followed by the
 [physical source contracts](modeling/09-phase-2-physical-source-contracts.md).
 The executable handoff is in the
 [Phase 2 source implementation](architecture/phase-2-source-implementation.md).
+The implemented batch boundary is described in the
+[bounded Airflow-to-R2-and-Iceberg runbook](architecture/bounded-airflow-r2-iceberg-pipeline.md).
 
 ## Phase 3 — streaming vertical slice
 

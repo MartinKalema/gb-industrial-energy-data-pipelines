@@ -7,9 +7,11 @@ British industrial sites. The platform will answer one central question:
 
 The project completed its first dimensional-modeling workshop on 2026-08-27.
 The grain, dimensions, facts, metric contracts, and expected-result scenarios
-are accepted. Phase 2 now has executable source contracts and a deterministic
-fictional-data generator; the physical Iceberg/dbt dimensional schema remains
-the next implementation boundary. The first mart answers delivery, SLA,
+are accepted. Phase 2 now has executable source contracts, a deterministic
+fictional-data generator, and an implemented bounded Airflow path from
+immutable R2 evidence through validation/quarantine into typed Iceberg source
+tables. A real R2/Trino/Iceberg run and exact replay passed on 2026-08-28; the physical
+dbt dimensional schema remains the next modeling boundary. The first mart answers delivery, SLA,
 contractual availability, and earned-revenue questions. Charging cost and
 carbon are explicitly deferred rather than inferred from unrelated public
 electricity data.
@@ -39,12 +41,14 @@ One coherent product can demonstrate:
   chosen only when the charging-cost/carbon process is modeled.
 - **Synthetic private data:** thermal-battery telemetry, steam meters, customers, contracts, commitments, maintenance, and billing. These sources are synthetic because real industrial records are proprietary.
 
-## Proposed local-first architecture
+## Local-first architecture
 
 ```text
-BATCH
-Airflow -> Elexon REST / IRIS archive -> raw R2 objects
-        -> Iceberg bronze -> Trino -> dbt -> dimensional marts
+BATCH (implemented synthetic-source boundary)
+Airflow -> deterministic source generator -> immutable raw R2 objects
+        -> validation -> accepted / quarantine objects on R2
+        -> local Trino -> typed Iceberg source tables on R2
+        -> dbt -> dimensional marts (next boundary)
 
 STREAM
 Elexon IRIS AMQP ----> local bridge ----\
@@ -58,7 +62,11 @@ QUERY (after Spark commits an Iceberg snapshot)
 Analyst / dbt / product API -> Trino -> Iceberg on R2
 ```
 
-All compute services run locally. Cloudflare R2 and its managed Iceberg REST catalog remain remote storage/metadata services, and the public source APIs remain remote. A fully offline MinIO plus local-catalog profile can be added later if needed.
+All compute services run locally. Cloudflare R2 is the only object-storage
+runtime, and its managed Iceberg REST catalog remains the remote metadata
+service. There is no MinIO or local object-store runtime. Local volumes hold
+only Airflow state/work files, Spark checkpoints, and downloaded dependencies.
+The public source APIs also remain remote.
 
 ## Repository map
 
@@ -90,7 +98,8 @@ All compute services run locally. Cloudflare R2 and its managed Iceberg REST cat
 | Dimensional model | Phase 1 logical model and all 3 expected-result specifications accepted; physical schema pending |
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
-| Current implementation phase | Phase 2 batch vertical slice — raw R2/Iceberg ingestion next |
+| Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
+| Current implementation phase | Phase 2 batch vertical slice — verify the bounded source load, then build the dbt dimensional boundary |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 
@@ -109,6 +118,9 @@ The Phase 2 source layer is executable; see the
 [source implementation handoff](docs/architecture/phase-2-source-implementation.md),
 [machine-readable contracts](contracts/README.md), and
 [synthetic generator](ingestion/batch/synthetic/README.md).
+
+The bounded batch pipeline is documented in the
+[Airflow-to-R2-and-Iceberg architecture and runbook](docs/architecture/bounded-airflow-r2-iceberg-pipeline.md).
 
 ## Secrets
 
