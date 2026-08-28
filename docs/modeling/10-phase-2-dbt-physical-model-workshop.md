@@ -134,8 +134,45 @@ Separate schemas create more namespaces to browse, but make the transformation
 boundary visible and reduce accidental use of source-shaped data as a finished
 business result.
 
+### DBT-003 — fixed-decimal quantities and financial calculations
+
+Accepted on 2026-08-28:
+
+> Preserve energy and rate inputs as fixed decimals, calculate interval GBP
+> amounts at the full resulting precision, aggregate those exact values, and
+> round only when a result is presented.
+
+Physical types:
+
+| Value | Trino/Iceberg type |
+|---|---|
+| Cumulative registers and energy or mass quantities | `decimal(20,6)` |
+| Contract energy and shortfall-penalty rates | `decimal(18,6)` |
+| Gross earned revenue, accrued SLA penalty, and net earned revenue | `decimal(38,12)` |
+
+Rules:
+
+- Do not use `double` for energy, rates, contractual quantities, or money.
+- Multiplying a `decimal(20,6)` quantity by a `decimal(18,6)` rate produces and
+  retains a `decimal(38,12)` interval amount.
+- Sum exact interval values before applying presentation rounding. Customer
+  displays may round GBP to two decimal places, but that rounded value is not
+  written back into the dimensional fact.
+- Calculate SLA attainment, contractual availability, and completeness from
+  stored additive numerators and denominators; do not store or average rounded
+  interval percentages.
+- Preserve null measures as null through arithmetic. Missing delivery,
+  capacity, or contract inputs must not be converted to numeric zero.
+- Keep `delivered_steam_t` nullable as `decimal(20,6)` until an authoritative
+  mass measurement or accepted steam-condition calculation exists.
+- Geographic coordinates may retain their source `double` representation
+  because they are descriptive attributes rather than contractual measures.
+
+Higher-precision monetary storage uses more bytes than a two-decimal amount,
+but prevents interval-level rounding from changing period totals.
+
 ## Status
 
-The dbt runtime and Trino connection are verified. DBT-001 and DBT-002 are accepted;
+The dbt runtime and Trino connection are verified. DBT-001 through DBT-003 are accepted;
 remaining physical modeling decisions are being reviewed one at a time before
 the mart SQL is implemented.
