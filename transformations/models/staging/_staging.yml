@@ -1,0 +1,499 @@
+version: 2
+
+models:
+  - name: stg_validated__customer_master
+    description: One unchanged row per accepted customer-master source revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: customer_natural_id
+        data_tests: [not_null]
+      - name: customer_version_id
+        data_tests: [not_null]
+      - name: legal_name
+        data_tests: [not_null]
+      - name: display_name
+        data_tests: [not_null]
+      - name: industry_sector_code
+        data_tests: [not_null]
+      - name: country_code
+        data_tests: [not_null]
+      - name: lifecycle_status
+        data_tests: [not_null]
+      - name: tenant_authorization_scope_id
+        data_tests: [not_null]
+      - name: effective_from_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: version_record_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__industrial_site_master
+    description: One unchanged row per accepted industrial-site source revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: site_natural_id
+        data_tests: [not_null]
+      - name: site_version_id
+        data_tests: [not_null]
+      - name: site_name
+        data_tests: [not_null]
+      - name: locality
+        data_tests: [not_null]
+      - name: postal_area
+        data_tests: [not_null]
+      - name: country_code
+        data_tests: [not_null]
+      - name: region_code
+        data_tests: [not_null]
+      - name: iana_timezone
+        data_tests: [not_null]
+      - name: operational_status
+        data_tests: [not_null]
+      - name: effective_from_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: version_record_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__delivery_point_assignment
+    description: One unchanged row per accepted delivery-point-assignment revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: delivery_point_assignment_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: delivery_point_name
+        data_tests: [not_null]
+      - name: site_natural_id
+        data_tests: [not_null]
+      - name: customer_natural_id
+        data_tests: [not_null]
+      - name: service_type
+        data_tests: [not_null]
+      - name: effective_from_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: assignment_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__revenue_meter_assignment
+    description: One unchanged row per accepted revenue-meter-assignment revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: meter_assignment_id
+        data_tests: [not_null]
+      - name: meter_natural_id
+        data_tests: [not_null]
+      - name: register_natural_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: assignment_role
+        data_tests: [not_null]
+      - name: register_type
+        data_tests: [not_null]
+      - name: native_unit
+        data_tests: [not_null]
+      - name: calibration_id
+        data_tests: [not_null]
+      - name: maximum_plausible_30_min_change
+        data_tests: [not_null]
+      - name: effective_from_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: assignment_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__contract_terms
+    description: One unchanged row per accepted contract-terms revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: contract_natural_id
+        data_tests: [not_null]
+      - name: contract_terms_version_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: customer_natural_id
+        data_tests: [not_null]
+      - name: effective_from_utc
+        data_tests: [not_null]
+      - name: energy_rate_gbp_per_mwh_th
+        data_tests: [not_null]
+      - name: sla_penalty_rate_gbp_per_mwh_th
+        data_tests: [not_null]
+      - name: currency_code
+        data_tests: [not_null]
+      - name: rate_unit
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: terms_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__commitment_schedule
+    description: One unchanged row per accepted interval commitment revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: source_commitment_revision_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: customer_natural_id
+        data_tests: [not_null]
+      - name: contract_natural_id
+        data_tests: [not_null]
+      - name: interval_start_utc
+        data_tests: [not_null]
+      - name: interval_end_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: schedule_record_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__approved_excess_order
+    description: One unchanged row per accepted excess-order interval-line revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: excess_order_natural_id
+        data_tests: [not_null]
+      - name: order_interval_line_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: customer_natural_id
+        data_tests: [not_null]
+      - name: contract_natural_id
+        data_tests: [not_null]
+      - name: interval_start_utc
+        data_tests: [not_null]
+      - name: interval_end_utc
+        data_tests: [not_null]
+      - name: approved_extra_mwh_th
+        data_tests: [not_null]
+      - name: quantity_unit
+        data_tests: [not_null]
+      - name: order_state
+        data_tests: [not_null]
+      - name: requested_at_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__revenue_meter_reading
+    description: One unchanged row per accepted cumulative meter-reading revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: source_reading_revision_id
+        data_tests: [not_null]
+      - name: meter_natural_id
+        data_tests: [not_null]
+      - name: register_natural_id
+        data_tests: [not_null]
+      - name: reading_at_utc
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: reading_status
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]
+
+  - name: stg_validated__delivery_point_capacity_assessment
+    description: One unchanged row per accepted interval capacity-assessment revision.
+    columns:
+      - name: source_schema_id
+        data_tests: [not_null]
+      - name: source_schema_version
+        data_tests: [not_null]
+      - name: source_system_id
+        data_tests: [not_null]
+      - name: synthetic_data
+        data_tests: [not_null]
+      - name: source_capacity_revision_id
+        data_tests: [not_null]
+      - name: delivery_point_natural_id
+        data_tests: [not_null]
+      - name: interval_start_utc
+        data_tests: [not_null]
+      - name: interval_end_utc
+        data_tests: [not_null]
+      - name: assessment_status
+        data_tests: [not_null]
+      - name: quantity_unit
+        data_tests: [not_null]
+      - name: assessment_method
+        data_tests: [not_null]
+      - name: assessment_method_version
+        data_tests: [not_null]
+      - name: capacity_reason_code
+        data_tests: [not_null]
+      - name: source_revision
+        data_tests: [not_null]
+      - name: revision_type
+        data_tests: [not_null]
+      - name: published_at_utc
+        data_tests: [not_null]
+      - name: approval_state
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        data_tests: [not_null]
+      - name: pipeline_evidence_envelope_id
+        data_tests: [not_null]
+      - name: pipeline_ingested_at_utc
+        data_tests: [not_null]
+      - name: pipeline_raw_object_uri
+        data_tests: [not_null]
+      - name: pipeline_raw_object_sha256
+        data_tests: [not_null]
+      - name: pipeline_raw_record_locator
+        data_tests: [not_null]
+      - name: pipeline_identity_sha256
+        description: Stable loader identity for this immutable source revision.
+        data_tests: [not_null, unique]
+      - name: pipeline_payload_sha256
+        data_tests: [not_null]

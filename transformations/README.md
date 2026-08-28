@@ -15,10 +15,14 @@ uv run dbt debug --project-dir transformations --profiles-dir transformations
 Trino endpoint by default and reads container overrides from environment
 variables when Airflow runs dbt.
 
-Planned model layers:
+Model layers:
 
-- `sources/` — declared validated Iceberg sources and freshness expectations
-- `staging/` — source-specific renaming, typing, and lightweight cleanup
+- `sources/` — the nine validated business sources plus the technical batch
+  coverage source. Fixed freshness thresholds are intentionally absent while
+  the bounded ingestion DAG remains manually triggered.
+- `staging/` — revision-preserving views with explicit columns. They retain
+  source types, nullable values, source revisions, and all eight raw-evidence
+  lineage fields without filtering, deduplication, ranking, or cleanup.
 - `intermediate/` — reusable reconciliation and integration logic
 - `marts/` — dimensional products and shared metric inputs agreed in workshops
 

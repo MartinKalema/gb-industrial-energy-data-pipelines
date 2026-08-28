@@ -1,0 +1,86 @@
+version: 2
+
+sources:
+  - name: validated
+    description: >-
+      Revision-preserving Iceberg tables accepted by the bounded batch pipeline.
+      These relations retain source history and pipeline evidence lineage; dbt
+      staging models do not choose a current revision.
+    database: r2
+    schema: industrial_energy_validated
+    tables:
+      - name: customer_master
+        description: Published revisions of effective customer-master versions.
+      - name: industrial_site_master
+        description: Published revisions of effective industrial-site versions.
+      - name: delivery_point_assignment
+        description: Published revisions of delivery-point-to-site and customer assignments.
+      - name: revenue_meter_assignment
+        description: Published revisions of revenue-meter register assignments.
+      - name: contract_terms
+        description: Published revisions of effective commercial contract terms.
+      - name: commitment_schedule
+        description: Published interval commitment-schedule revisions.
+      - name: approved_excess_order
+        description: Published interval-line revisions for approved excess orders.
+      - name: revenue_meter_reading
+        description: Published revisions of cumulative revenue-meter readings.
+      - name: delivery_point_capacity_assessment
+        description: Published interval capacity-assessment revisions.
+
+  - name: control
+    description: Technical control-plane relations written by successful ingestion runs.
+    database: r2
+    schema: industrial_energy_control
+    tables:
+      - name: batch_run_coverage
+        description: >-
+          Accepted batch-run coverage used to construct the complete expected
+          delivery-point interval spine. This is not a business staging source.
+        columns:
+          - name: pipeline_run_id
+            data_type: varchar
+          - name: start_date_local_inclusive
+            data_type: date
+          - name: end_date_local_inclusive
+            data_type: date
+          - name: operating_timezone
+            data_type: varchar
+          - name: generator_name
+            data_type: varchar
+          - name: generator_version
+            data_type: varchar
+          - name: generator_seed
+            data_type: bigint
+          - name: generated_at_utc
+            data_type: timestamp(6) with time zone
+          - name: raw_manifest_uri
+            data_type: varchar
+          - name: raw_manifest_sha256
+            data_type: varchar
+          - name: raw_manifest_ingested_at_utc
+            data_type: timestamp(6) with time zone
+          - name: reconciliation_status
+            data_type: varchar
+          - name: raw_record_count
+            data_type: bigint
+          - name: accepted_record_count
+            data_type: bigint
+          - name: quarantined_record_count
+            data_type: bigint
+          - name: duplicate_record_count
+            data_type: bigint
+          - name: iceberg_reconciled_record_count
+            data_type: bigint
+          - name: iceberg_table_count
+            data_type: bigint
+          - name: first_orchestrator_run_id
+            data_type: varchar
+          - name: reconciliation_artifact_uri
+            data_type: varchar
+          - name: reconciliation_artifact_sha256
+            data_type: varchar
+          - name: coverage_published_at_utc
+            data_type: timestamp(6) with time zone
+          - name: coverage_payload_sha256
+            data_type: varchar
