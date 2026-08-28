@@ -3,11 +3,13 @@ name = "industrial-energy-lakehouse"
 version = "0.1.0"
 description = "Local-first industrial thermal-energy lakehouse portfolio project"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "boto3>=1.35,<2",
+  "jsonschema[format]>=4.23,<5",
+]
 
 [dependency-groups]
 dev = [
-  "jsonschema[format]>=4.23,<5",
   "pytest>=8,<9",
 ]
 
@@ -17,6 +19,7 @@ pythonpath = ["."]
 testpaths = [
   "tests/contracts",
   "tests/generator",
+  "tests/pipeline",
 ]
 
 [tool.uv]
