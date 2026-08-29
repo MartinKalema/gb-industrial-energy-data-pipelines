@@ -4,6 +4,10 @@ import { notFound } from "next/navigation";
 import { MetricCard } from "@/components/metric-card";
 import { StateBadge } from "@/components/state-badge";
 import type { DeliveryIntervalHistoryItem } from "@/lib/contracts";
+import {
+  parseProductDataVersion,
+  withProductDataVersion,
+} from "@/lib/data-version";
 import type { SearchParams } from "@/lib/filters";
 import { dashboardQuery, parseDashboardFilters } from "@/lib/filters";
 import {
@@ -127,14 +131,27 @@ export default async function DeliveryIntervalHistoryPage({
     searchParams,
   ]);
   const filters = parseDashboardFilters(rawSearchParams);
+  const requestedDataVersion = parseProductDataVersion(
+    rawSearchParams.data_version,
+  );
+  if (
+    rawSearchParams.data_version !== undefined &&
+    requestedDataVersion === undefined
+  ) {
+    notFound();
+  }
 
   let historyResult;
   let contextResult;
   try {
-    [historyResult, contextResult] = await Promise.all([
-      getDeliveryIntervalHistory(deliveryIntervalKey, filters),
-      getProductContext(filters.actor),
-    ]);
+    contextResult = await getProductContext(filters.actor, {
+      dataVersion: requestedDataVersion,
+    });
+    const dataVersion =
+      requestedDataVersion ?? contextResult.data.data_version ?? undefined;
+    historyResult = await getDeliveryIntervalHistory(deliveryIntervalKey, filters, {
+      dataVersion,
+    });
   } catch (error) {
     if (error instanceof ProductApiError && (error.status === 403 || error.status === 404)) {
       notFound();
@@ -147,6 +164,8 @@ export default async function DeliveryIntervalHistoryPage({
   const current =
     history.items.find((item) => item.is_current_knowledge_state) ?? history.items.at(-1)!;
   const currency = current.currency_code;
+  const dataVersion =
+    requestedDataVersion ?? contextResult.data.data_version ?? undefined;
 
   return (
     <div className="app-shell detail-shell">
@@ -157,7 +176,13 @@ export default async function DeliveryIntervalHistoryPage({
             <p className="brand-name">Steam Delivery Performance</p>
           </div>
         </div>
-        <Link className="back-link" href={`/?${dashboardQuery(filters)}`}>
+        <Link
+          className="back-link"
+          href={`/?${withProductDataVersion(
+            dashboardQuery(filters),
+            dataVersion,
+          )}`}
+        >
           <span aria-hidden="true">←</span> Back to interval register
         </Link>
       </header>

@@ -19,4 +19,4 @@ The project should produce visible evidence for the role rather than merely list
 | Engineering standards | Typed contracts, linting, unit/integration/end-to-end tests, CI gates, ADRs, PR template, and contribution guide |
 | Collaborative development | Workshop decisions and feedback from domain practitioners or representative users |
 | MCP/plugin APIs | Stretch: expose the same read-only governed tools through MCP |
-| ClickHouse | Stretch only after an observed operational-query latency need |
+| ClickHouse | Implemented rebuildable serving layer after measuring direct Trino/R2 product latency; versioned native tables, final ready marker, exact retry, and read-only tenant-scoped API |

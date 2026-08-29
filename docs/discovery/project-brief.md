@@ -84,7 +84,10 @@ The historical product should then explain:
 - Kubernetes
 - Enterprise identity federation
 - A second table format
-- ClickHouse or another serving store before Iceberg/Trino performance is measured
+- Adding a serving store before Iceberg/Trino product latency is measured
+
+That condition was later satisfied: direct Trino/R2 product latency was
+measured, and the implemented ClickHouse serving copy keeps Iceberg canonical.
 
 ## Completion evidence
 

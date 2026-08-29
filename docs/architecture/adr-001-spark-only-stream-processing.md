@@ -30,8 +30,12 @@ Trino never consumes the Redpanda stream. It begins work only after Spark has
 committed an Iceberg snapshot:
 
 ```text
-dbt / API / analyst -> Trino -> committed Iceberg snapshots
+dbt / analyst -> Trino -> committed Iceberg snapshots
 ```
+
+The historical product later added a separate finite publication from the
+tested Trino/dbt mart to ClickHouse. FastAPI reads that serving copy. This does
+not add another engine to the streaming pipeline.
 
 Airflow may monitor and recover the Spark service, but it will not run an
 infinite stream as an Airflow task.
@@ -67,8 +71,8 @@ reconciliation work.
 - Spark owns schema validation, event-time state, watermarks, deduplication,
   checkpoints, quarantine routing, and Iceberg streaming writes.
 - Redpanda owns durable buffering and replay; it performs no analytical compute.
-- Trino remains useful, but only for finite dbt models, exploration, dashboards,
-  and product queries over committed Iceberg snapshots.
+- Trino remains useful for finite dbt models, exploration, and publishing
+  tested product projections over committed Iceberg snapshots.
 - The first streaming demo can be understood and debugged as one processing path.
 - Spark resource usage must be bounded for the local computer.
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { StateBadge } from "@/components/state-badge";
 import type { DashboardFilters, DeliveryInterval } from "@/lib/contracts";
+import { withProductDataVersion } from "@/lib/data-version";
 import { dashboardQuery } from "@/lib/filters";
 import {
   formatCurrency,
@@ -14,11 +15,13 @@ export function IntervalTable({
   filters,
   currency,
   financialColumnLabel,
+  dataVersion,
 }: {
   intervals: DeliveryInterval[];
   filters: DashboardFilters;
   currency: string | null;
   financialColumnLabel: string;
+  dataVersion: string | undefined;
 }) {
   if (intervals.length === 0) {
     return (
@@ -88,7 +91,10 @@ export function IntervalTable({
                 <td>
                   <Link
                     className="row-link"
-                    href={`/delivery-intervals/${encodeURIComponent(interval.interval_key)}?${dashboardQuery(filters)}`}
+                    href={`/delivery-intervals/${encodeURIComponent(interval.interval_key)}?${withProductDataVersion(
+                      dashboardQuery(filters),
+                      dataVersion,
+                    )}`}
                     aria-label={`Inspect revision history for interval beginning ${formatDateTime(interval.interval_start_at)}`}
                   >
                     Inspect <span aria-hidden="true">→</span>

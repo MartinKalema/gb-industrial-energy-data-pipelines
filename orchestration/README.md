@@ -14,13 +14,14 @@ Long-running IRIS, Redpanda, and Spark consumers run as supervised services. Air
 
 ## Implemented steam-delivery data pipeline
 
-`steam_delivery_data_pipeline` is the first implemented DAG. In simple
-English, one manual run takes a small period of fictional industrial-energy
+`steam_delivery_data_pipeline` is the first implemented DAG. One manual run
+takes a small period of fictional industrial-energy
 source data from generation to original files in R2, row checks with failures
 saved separately, typed Iceberg source tables, final count reconciliation, and
 a queryable successful-run coverage declaration. Six smaller dbt tasks then
 prepare and test the loaded data and calculations, build the dimensional
-tables, and test the complete mart through local Trino.
+tables, and test the complete mart through local Trino. A final publication
+task copies that tested mart to the ClickHouse database used by the frontend.
 
 The task order is:
 
@@ -38,6 +39,7 @@ validate_run_parameters
   -> build_delivery_history_fact_with_dbt
   -> build_dimension_tables_with_dbt
   -> test_complete_dimensional_mart_with_dbt
+  -> publish_tested_dimensional_mart_to_clickhouse
 ```
 
 Each name says what the operator should expect:
@@ -57,6 +59,7 @@ Each name says what the operator should expect:
 | `build_delivery_history_fact_with_dbt` | The as-known delivery-history fact is ready. |
 | `build_dimension_tables_with_dbt` | The 13 physical dimension and revision-audit tables are ready. |
 | `test_complete_dimensional_mart_with_dbt` | All 70 final mart and reconciliation checks passed. |
+| `publish_tested_dimensional_mart_to_clickhouse` | A validated, versioned copy of the tested current and history marts is ready for the frontend. |
 
 Each task exchanges only a small JSON summary through XCom. Records and bulk
 files do not pass through the Airflow metadata database.
@@ -83,7 +86,7 @@ row for the same pipeline identity. They run in a fixed order:
    a clean catalog.
 6. Run the 70 final dimensional-mart and reconciliation tests.
 
-The first two tasks use dbt's cautious test selection. In simple terms, dbt
+The first two tasks use dbt's cautious test selection. dbt
 runs a test only when every model that test needs is available in that section;
 it does not pull a later mart model into an earlier task. All six use
 `--no-populate-cache`, write artifacts into the persistent Airflow volume in a
@@ -91,11 +94,21 @@ separate folder for each task and attempt, and return only compact result counts
 through XCom. If a task fails, Airflow retries only that task. Earlier
 successful dbt tasks stay successful and their relations remain available.
 This applies to a retry or task clear inside the same Airflow run. Triggering a
-brand-new DAG run intentionally starts the 13-task sequence again, with the
+brand-new DAG run intentionally starts the 14-task sequence again, with the
 source layers safely reusing identical evidence and rows.
 
 A successful coverage row proves the source load reconciled. The dimensional
-mart is ready only when `test_complete_dimensional_mart_with_dbt` succeeds.
+mart is ready only when `test_complete_dimensional_mart_with_dbt` succeeds. The
+frontend serving copy is ready only when
+`publish_tested_dimensional_mart_to_clickhouse` then succeeds.
+
+The publication task reads only the tested Trino mart projections. It writes
+current and history rows under a new ClickHouse `load_attempt_id`, reads them
+back, and checks counts, unique keys, tenant scopes, date coverage, and exact
+content hashes. Its final write is a ready marker whose `publication_id`
+matches that attempt. Without the marker, a partial or failed candidate is
+invisible to the API and the previous good version remains live. Retrying an
+exact successful fingerprint reuses its ready version.
 
 The DAG has no schedule and permits one active run. Source/control tasks retry
 once after one minute and have 20-minute execution limits. Each dbt task has a
@@ -108,8 +121,9 @@ attempt's tag, and waits until no active match remains. If Trino cannot confirm
 the cleanup, Airflow disables the automatic retry so a new writer cannot
 overlap an uncertain old one. The whole run has a bounded practical ceiling of
 180 minutes. A dbt retry happens only if enough DAG-run time remains; the
-180-minute limit does not guarantee a complete second attempt. The DAG
-parameters are:
+180-minute limit does not guarantee a complete second attempt. The ClickHouse
+publication task has a 20-minute limit and up to two retries after one minute;
+its marker-gated writes make those retries safe. The DAG parameters are:
 
 - `start_date`: first operating date, inclusive;
 - `end_date`: last operating date, inclusive and no earlier than the start;
@@ -141,11 +155,18 @@ provisioned one-slot `iceberg_writer` pool. Any future manual/backfill DAG that
 loads the same tables must also use that pool.
 Insert-only merges and post-write verification make completed chunks safe to
 retry, but they do not make two concurrent first writers safe.
+The ClickHouse publication task also uses the one-slot `iceberg_writer` pool.
+Although it does not write Iceberg, holding the same pool prevents another
+source or dbt writer from changing the tested mart between the final dbt test
+and the publisher's separate Trino export queries. The DAG's
+`max_active_runs=1` setting also prevents two runs of this project pipeline from
+overlapping.
 
 ## Start and trigger it locally
 
-First configure the ignored `.env` from [`.env.example`](../.env.example). Then
-start the `batch` profile from the repository root:
+First configure the ignored `.env` from [`.env.example`](../.env.example),
+including three different high-entropy ClickHouse passwords. Then start the
+`batch` profile from the repository root:
 
 ```bash
 docker compose --project-directory . -f infrastructure/compose.yaml \
@@ -171,9 +192,18 @@ standalone dbt command at the same time as an Airflow dbt task: the Airflow
 `iceberg_writer` pool serializes in-DAG work, but cannot serialize an unrelated
 host process.
 
+After the final dbt test is green, open
+`publish_tested_dimensional_mart_to_clickhouse`. Its compact result shows the
+publication version, whether it was created or reused, current/history counts,
+hashes, date coverage, and publication time. If only this task fails, repair
+the ClickHouse problem and retry this task; do not restart the successful source
+and dbt work.
+
 The complete object layout, validation rules, lineage columns, failure
 recovery, and scale trade-offs are documented in the
 [bounded pipeline architecture and runbook](../docs/architecture/bounded-airflow-r2-iceberg-pipeline.md).
+The final serving release is documented in the
+[ClickHouse frontend serving architecture](../docs/architecture/clickhouse-frontend-serving-layer.md).
 
 ## Local development boundary
 

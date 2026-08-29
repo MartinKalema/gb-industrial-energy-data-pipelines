@@ -19,6 +19,7 @@ from apps.api.auth import (
     IdentityProviderUnavailable,
     authorize_filters,
 )
+from apps.api.clickhouse_repository import ClickHouseDeliveryPerformanceRepository
 from apps.api.models import (
     DeliveryIntervalHistoryResponse,
     DeliveryIntervalsPageResponse,
@@ -28,6 +29,7 @@ from apps.api.models import (
     ProductContextResponse,
 )
 from apps.api.repository import (
+    DataVersionUnavailable,
     DeliveryPerformanceRepository,
     MartIntegrityError,
     QueryScope,
@@ -46,6 +48,7 @@ StatusFilter = Literal[
 ]
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 INTERVAL_KEY_PATTERN = r"^[a-f0-9]{64}$"
+DATA_VERSION_PATTERN = re.compile(r"^publication-[a-f0-9]{32}$")
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -147,13 +150,36 @@ def _aware_as_of(as_of: datetime | None) -> datetime | None:
     return as_of.astimezone(UTC)
 
 
+def _data_version(
+    x_product_data_version: Annotated[
+        str | None, Header(alias="X-Product-Data-Version", max_length=128)
+    ] = None,
+) -> str | None:
+    if x_product_data_version is None:
+        return None
+    value = x_product_data_version.strip()
+    if DATA_VERSION_PATTERN.fullmatch(value) is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_data_version",
+                "message": "X-Product-Data-Version has an invalid format",
+            },
+        )
+    return value
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     repository: DeliveryPerformanceRepository | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
-    repository = repository or TrinoDeliveryPerformanceRepository(settings)
+    if repository is None:
+        if settings.repository_backend == "clickhouse":
+            repository = ClickHouseDeliveryPerformanceRepository(settings)
+        else:
+            repository = TrinoDeliveryPerformanceRepository(settings)
 
     app = FastAPI(
         title="Historical Steam Delivery Performance API",
@@ -210,6 +236,16 @@ def create_app(
             "Historical delivery data failed an integrity check",
         )
 
+    @app.exception_handler(DataVersionUnavailable)
+    async def data_version_error(
+        _request: Request, _error_value: DataVersionUnavailable
+    ) -> JSONResponse:
+        return _error(
+            409,
+            "data_version_unavailable",
+            "The requested product data version is not available",
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_error(
         _request: Request, _error_value: RequestValidationError
@@ -257,8 +293,11 @@ def create_app(
         response_model=ProductContextResponse,
         responses={401: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
     )
-    def context(actor: Annotated[Actor, Depends(_actor)]) -> ProductContextResponse:
-        return app.state.service.context(actor)
+    def context(
+        actor: Annotated[Actor, Depends(_actor)],
+        data_version: Annotated[str | None, Depends(_data_version)],
+    ) -> ProductContextResponse:
+        return app.state.service.context(actor, data_version=data_version)
 
     @app.get(
         "/api/v1/delivery-performance/summary",
@@ -267,8 +306,9 @@ def create_app(
     def summary(
         actor: Annotated[Actor, Depends(_actor)],
         scope: Annotated[QueryScope, Depends(_scope)],
+        data_version: Annotated[str | None, Depends(_data_version)],
     ) -> DeliveryPerformanceSummaryResponse:
-        return app.state.service.summary(actor, scope)
+        return app.state.service.summary(actor, scope, data_version=data_version)
 
     @app.get(
         "/api/v1/delivery-performance/intervals",
@@ -278,6 +318,7 @@ def create_app(
         request: Request,
         actor: Annotated[Actor, Depends(_actor)],
         scope: Annotated[QueryScope, Depends(_scope)],
+        data_version: Annotated[str | None, Depends(_data_version)],
         page: Annotated[int, Query(ge=1, le=100_000)] = 1,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ) -> DeliveryIntervalsPageResponse:
@@ -289,7 +330,13 @@ def create_app(
                     "message": "limit exceeds the configured maximum page size",
                 },
             )
-        return app.state.service.intervals(actor, scope, page=page, limit=limit)
+        return app.state.service.intervals(
+            actor,
+            scope,
+            page=page,
+            limit=limit,
+            data_version=data_version,
+        )
 
     @app.get(
         "/api/v1/delivery-performance/intervals/{interval_key}/history",
@@ -298,13 +345,17 @@ def create_app(
     )
     def interval_history(
         actor: Annotated[Actor, Depends(_actor)],
+        data_version: Annotated[str | None, Depends(_data_version)],
         interval_key: Annotated[
             str, Path(min_length=64, max_length=64, pattern=INTERVAL_KEY_PATTERN)
         ],
         as_of: Annotated[datetime | None, Query()] = None,
     ) -> DeliveryIntervalHistoryResponse | JSONResponse:
         result = app.state.service.interval_history(
-            actor, interval_key, as_of=_aware_as_of(as_of)
+            actor,
+            interval_key,
+            as_of=_aware_as_of(as_of),
+            data_version=data_version,
         )
         if result is None:
             return _error(404, "interval_not_found", "Delivery interval was not found")

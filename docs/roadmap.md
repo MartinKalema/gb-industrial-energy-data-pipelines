@@ -77,13 +77,24 @@ measurement-driven later optimization.
 
 **Historical delivery product milestone:** implemented and locally verified on
 2026-08-29. The product profile serves a read-only, tenant-scoped FastAPI over
-the governed current/history marts and a server-rendered investigation
+the governed current/history product data and a server-rendered investigation
 interface for one commercial and two customer demo personas. It exposes known
-subtotals without presenting provisional values as official, preserves
-`null` as unavailable rather than zero, shows Europe/London operating dates and
-UTC evidence timestamps, and lets an authorized user inspect an interval's
-source-knowledge history. Product data readiness follows the successful final
-dbt checkpoint; the API and interface do not replace that test gate.
+subtotals without presenting provisional values as official, preserves `null`
+as unavailable rather than zero, shows Europe/London operating dates and UTC
+evidence timestamps, and lets an authorized user inspect an interval's
+source-knowledge history.
+
+**ClickHouse serving milestone:** implemented and locally verified on
+2026-08-29. After `test_complete_dimensional_mart_with_dbt` succeeds, Airflow's
+`publish_tested_dimensional_mart_to_clickhouse` task copies the product-shaped
+current and history projections to versioned native `MergeTree` tables. A new
+version remains invisible until its counts, keys, tenant scopes, date coverage,
+and content hashes pass and a ready marker is written. Exact retries reuse the
+ready version; partial or failed attempts leave the previous version live. The
+real verification published 96 current and 558 authorized history rows. Local
+API calls fell from multi-second Trino/R2 queries to about 0.02 seconds, and the
+server-rendered page measured about 0.17 seconds. R2/Iceberg remains canonical,
+and the serving copy performs no new business calculations.
 
 - Resolve and record the Phase 2 source-contract entry decisions for deliverable
   capacity, shared-capacity allocation, commitment/contract revisions, and
@@ -110,6 +121,7 @@ The implemented analytical boundary is described in the
 [steam-delivery dbt dimensional-mart runbook](architecture/steam-delivery-dbt-dimensional-mart.md).
 The focused read-only product is described in the
 [historical delivery product architecture](architecture/historical-steam-delivery-product.md),
+[ClickHouse frontend serving architecture](architecture/clickhouse-frontend-serving-layer.md),
 [API guide](../apps/api/README.md), and [web guide](../apps/web/README.md).
 
 ## Phase 3 — streaming vertical slice
@@ -163,7 +175,8 @@ enforcement, and the complete product-security scope below.
 
 ## Optional extensions
 
-- ClickHouse only if measured operational-query latency warrants a serving layer.
+- Incremental ClickHouse publication and old-version retention only after data
+  growth makes full versioned snapshots expensive.
 - MCP exposure of the same governed read-only tools.
 - Day-ahead recommendation model after metric definitions are trustworthy.
 - Production identity provider and catalog authorization.

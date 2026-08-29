@@ -10,6 +10,7 @@ const filters: DashboardFilters = {
   page: 1,
   limit: 25,
 };
+const dataVersion = `publication-${"b".repeat(32)}`;
 
 function ribbonInterval(key: string, start: string): DeliveryInterval {
   return {
@@ -27,6 +28,7 @@ describe("OutcomeRibbon scroll region", () => {
     render(
       <OutcomeRibbon
         filters={filters}
+        dataVersion={dataVersion}
         intervals={[
           ribbonInterval("interval-first", "2026-08-25T23:00:00Z"),
           ribbonInterval("interval-second", "2026-08-25T23:30:00Z"),
@@ -51,5 +53,13 @@ describe("OutcomeRibbon scroll region", () => {
       "href",
       expect.stringContaining("interval-second"),
     );
+    const detailUrl = new URL(
+      outcomes[0].getAttribute("href")!,
+      "http://product.local",
+    );
+    expect(detailUrl.searchParams.get("data_version")).toBe(dataVersion);
+    expect(detailUrl.searchParams.get("actor")).toBe(filters.actor);
+    expect(detailUrl.searchParams.get("start_date")).toBe(filters.start);
+    expect(detailUrl.searchParams.get("end_date")).toBe(filters.end);
   });
 });

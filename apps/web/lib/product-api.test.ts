@@ -3,6 +3,8 @@ import { getDeliverySummary, getProductContext, ProductApiError } from "@/lib/pr
 import type { DashboardFilters } from "@/lib/contracts";
 import { deliveryIntervalHistorySchema } from "@/lib/schemas";
 
+const dataVersion = `publication-${"a".repeat(32)}`;
+
 const filters: DashboardFilters = {
   actor: "commercial-manager",
   start: "2026-08-26",
@@ -84,31 +86,45 @@ describe("product API client", () => {
   it("sends demo identity only in the server-side header", async () => {
     const fetchImpl = mockFetch({
       identity: { actor_id: "commercial-manager", role: "commercial_manager" },
+      data_version: dataVersion,
+      data_published_at_utc: "2026-08-29T01:00:00Z",
       customers: [],
       available_reporting_dates: null,
     });
 
     const result = await getProductContext(
       "commercial-manager",
-      fetchImpl as unknown as typeof fetch,
+      {
+        dataVersion,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
     );
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
 
     expect(url.pathname).toBe("/api/v1/context");
     expect(url.searchParams.has("actor")).toBe(false);
-    expect(init.headers).toMatchObject({ "X-Demo-Actor": "commercial-manager" });
+    expect(init.headers).toMatchObject({
+      "X-Demo-Actor": "commercial-manager",
+      "X-Product-Data-Version": dataVersion,
+    });
     expect(result.requestId).toBe("request-123");
   });
 
   it("uses inclusive reporting dates and preserves null official metrics", async () => {
     const fetchImpl = mockFetch(summaryBody());
 
-    const result = await getDeliverySummary(filters, fetchImpl as unknown as typeof fetch);
-    const [url] = fetchImpl.mock.calls[0] as unknown as [URL];
+    const result = await getDeliverySummary(filters, {
+      dataVersion,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
 
     expect(url.searchParams.get("start_date")).toBe("2026-08-26");
     expect(url.searchParams.get("end_date")).toBe("2026-08-26");
     expect(url.search).not.toContain("T00");
+    expect(init.headers).toMatchObject({
+      "X-Product-Data-Version": dataVersion,
+    });
     expect(result.data.sla_attainment_percent).toBeNull();
     expect(result.data.net_earned_revenue_gbp).toBeNull();
   });
@@ -119,7 +135,9 @@ describe("product API client", () => {
     const fetchImpl = mockFetch(body);
 
     await expect(
-      getDeliverySummary(filters, fetchImpl as unknown as typeof fetch),
+      getDeliverySummary(filters, {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({
       status: 502,
       requestId: "request-123",
@@ -133,7 +151,9 @@ describe("product API client", () => {
     });
 
     await expect(
-      getProductContext("commercial-manager", fetchImpl as unknown as typeof fetch),
+      getProductContext("commercial-manager", {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({
       name: "ProductApiError",
       status: 502,
@@ -149,7 +169,9 @@ describe("product API client", () => {
     );
 
     await expect(
-      getProductContext("commercial-manager", fetchImpl as unknown as typeof fetch),
+      getProductContext("commercial-manager", {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({
       status: 403,
       requestId: "request-123",

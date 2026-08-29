@@ -5,6 +5,7 @@ description = "Local-first industrial thermal-energy lakehouse portfolio project
 requires-python = ">=3.11"
 dependencies = [
   "boto3>=1.35,<2",
+  "clickhouse-connect==1.7.2",
   "fastapi==0.141.1",
   "jsonschema[format]>=4.23,<5",
   "trino==0.339.0",

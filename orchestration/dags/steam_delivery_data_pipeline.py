@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from airflow.sdk import Param, dag, task
-
 
 _MAX_XCOM_BYTES = 16 * 1024
 
@@ -45,7 +44,7 @@ def _small_xcom(stage: str, value: Any) -> dict[str, Any]:
         "and test the dimensional mart through restartable dbt checkpoints."
     ),
     schedule=None,
-    start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2026, 1, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
     dagrun_timeout=timedelta(minutes=180),
@@ -215,6 +214,7 @@ def steam_delivery_data_pipeline():
 
         from airflow.sdk import get_current_context
         from airflow.sdk.exceptions import AirflowFailException
+
         from ingestion.batch.pipeline.dbt_build import DbtRemoteCleanupError
         from ingestion.batch.pipeline.workflow import build_dimensional_mart_step
 
@@ -234,6 +234,35 @@ def steam_delivery_data_pipeline():
         return _small_xcom(
             f"{step_name}_with_dbt",
             checkpoint_result,
+        )
+
+    @task(
+        task_id="publish_tested_dimensional_mart_to_clickhouse",
+        multiple_outputs=False,
+        pool="iceberg_writer",
+        pool_slots=1,
+        execution_timeout=timedelta(minutes=20),
+        retries=2,
+        retry_delay=timedelta(minutes=1),
+    )
+    def publish_tested_dimensional_mart_to_clickhouse(
+        plan: dict[str, Any],
+        coverage_result: dict[str, Any],
+        dbt_test_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Publish the fully tested delivery read model for the frontend."""
+
+        from ingestion.batch.pipeline.workflow import (
+            publish_tested_dimensional_mart_to_clickhouse as publish_mart,
+        )
+
+        return _small_xcom(
+            "publish_tested_dimensional_mart_to_clickhouse",
+            publish_mart(
+                plan,
+                coverage_result,
+                dbt_test_result,
+            ),
         )
 
     plan = validate_and_prepare_run()
@@ -265,6 +294,11 @@ def steam_delivery_data_pipeline():
     test_complete_mart = run_dbt_checkpoint.override(
         task_id="test_complete_dimensional_mart_with_dbt"
     )(plan, coverage_result, "test_complete_dimensional_mart")
+    clickhouse_publication = publish_tested_dimensional_mart_to_clickhouse(
+        plan,
+        coverage_result,
+        test_complete_mart,
+    )
 
     (
         prepare_loaded_data
@@ -273,6 +307,7 @@ def steam_delivery_data_pipeline():
         >> build_history_fact
         >> build_dimensions
         >> test_complete_mart
+        >> clickhouse_publication
     )
 
 

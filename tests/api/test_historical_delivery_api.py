@@ -4,7 +4,8 @@ import json
 import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from apps.api.app import create_app
 from apps.api.auth import DEMO_ACTORS, Actor
 from apps.api.repository import (
+    ContextResult,
     ContextRow,
     QueryScope,
     RepositoryUnavailable,
@@ -151,38 +153,61 @@ class FakeRepository:
             raise self.ready
         return self.ready
 
-    def get_context(self, actor: Actor) -> list[ContextRow]:
-        self.calls.append(("context", actor))
+    def get_context(
+        self, actor: Actor, *, data_version: str | None = None
+    ) -> ContextResult:
+        self.calls.append(("context", actor, data_version))
         customer = "CUST-002" if actor.actor_id == "customer-cust-002" else "CUST-001"
         site = "SITE-002" if customer == "CUST-002" else "SITE-001"
         point = "DP-002" if customer == "CUST-002" else "DP-001"
-        return [
-            ContextRow(
-                customer_id=customer,
-                customer_name=f"Fictional {customer}",
-                site_id=site,
-                site_name=f"Synthetic {site}",
-                delivery_point_id=point,
-                delivery_point_name=f"Synthetic {point}",
-                minimum_reporting_date=date(2026, 8, 26),
-                maximum_reporting_date=date(2026, 8, 26),
-            )
-        ]
+        return ContextResult(
+            rows=[
+                ContextRow(
+                    customer_id=customer,
+                    customer_name=f"Fictional {customer}",
+                    site_id=site,
+                    site_name=f"Synthetic {site}",
+                    delivery_point_id=point,
+                    delivery_point_name=f"Synthetic {point}",
+                    minimum_reporting_date=date(2026, 8, 26),
+                    maximum_reporting_date=date(2026, 8, 26),
+                )
+            ],
+            data_version=None,
+            data_published_at_utc=None,
+        )
 
-    def get_summary(self, actor: Actor, scope: QueryScope) -> SummaryAggregate:
-        self.calls.append(("summary", actor, scope))
+    def get_summary(
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        data_version: str | None = None,
+    ) -> SummaryAggregate:
+        self.calls.append(("summary", actor, scope, data_version))
         return self.summary_value
 
     def get_intervals(
-        self, actor: Actor, scope: QueryScope, *, page: int, limit: int
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        page: int,
+        limit: int,
+        data_version: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        self.calls.append(("intervals", actor, scope, page, limit))
+        self.calls.append(("intervals", actor, scope, page, limit, data_version))
         return self.interval_rows, len(self.interval_rows)
 
     def get_interval_history(
-        self, actor: Actor, interval_key: str, *, as_of: datetime | None = None
+        self,
+        actor: Actor,
+        interval_key: str,
+        *,
+        as_of: datetime | None = None,
+        data_version: str | None = None,
     ) -> list[dict[str, Any]]:
-        self.calls.append(("history", actor, interval_key, as_of))
+        self.calls.append(("history", actor, interval_key, as_of, data_version))
         return self.history_rows
 
 
@@ -227,6 +252,15 @@ def test_readiness_distinguishes_ready_and_unavailable(
     response = client.get("/health/ready")
     assert response.status_code == 503
     assert "secret" not in response.text
+
+
+def test_container_readiness_deadline_covers_both_bounded_queries() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "apps" / "api" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "--timeout=135s" in dockerfile
+    assert "timeout=130" in dockerfile
 
 
 def test_repository_readiness_accepts_queryable_empty_mart() -> None:
@@ -344,6 +378,8 @@ def test_context_returns_only_repository_authorized_options(
             "end": "2026-08-26",
             "time_zone": "Europe/London",
         },
+        "data_version": None,
+        "data_published_at_utc": None,
     }
 
 
@@ -726,7 +762,7 @@ def test_failed_trino_query_is_explicitly_cancelled() -> None:
     cancelled = False
 
     class FailingCursor:
-        description: list[tuple[str]] = []
+        description: ClassVar[list[tuple[str]]] = []
 
         def execute(self, _sql: str, _parameters: list[Any]) -> None:
             raise TimeoutError("query deadline exceeded")

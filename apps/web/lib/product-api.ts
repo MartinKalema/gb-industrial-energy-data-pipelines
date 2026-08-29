@@ -20,6 +20,12 @@ type Fetch = typeof fetch;
 interface RequestOptions {
   actor: DemoActor;
   params?: Record<string, string | number | undefined>;
+  dataVersion?: string;
+  fetchImpl?: Fetch;
+}
+
+interface VersionedRequestOptions {
+  dataVersion?: string;
   fetchImpl?: Fetch;
 }
 
@@ -77,7 +83,7 @@ function errorDetail(body: unknown): string | null {
 export async function requestProductApi<T>(
   path: string,
   schema: z.ZodType<T>,
-  { actor, params = {}, fetchImpl = fetch }: RequestOptions,
+  { actor, params = {}, dataVersion, fetchImpl = fetch }: RequestOptions,
 ): Promise<ApiEnvelope<T>> {
   const url = new URL(path.replace(/^\//, ""), productApiUrl().toString().replace(/\/?$/, "/"));
   Object.entries(params).forEach(([key, value]) => {
@@ -89,6 +95,7 @@ export async function requestProductApi<T>(
     headers: {
       Accept: "application/json",
       "X-Demo-Actor": actor,
+      ...(dataVersion ? { "X-Product-Data-Version": dataVersion } : {}),
     },
     cache: "no-store",
     signal: AbortSignal.timeout(productApiTimeoutMs()),
@@ -136,23 +143,37 @@ function scopedParams(filters: DashboardFilters) {
   };
 }
 
-export function getProductContext(actor: DemoActor, fetchImpl?: Fetch) {
+export function getProductContext(
+  actor: DemoActor,
+  { dataVersion, fetchImpl }: VersionedRequestOptions = {},
+) {
   return requestProductApi<ProductContext>(
     "/api/v1/context",
     productContextSchema,
-    { actor, fetchImpl },
+    { actor, dataVersion, fetchImpl },
   );
 }
 
-export function getDeliverySummary(filters: DashboardFilters, fetchImpl?: Fetch) {
+export function getDeliverySummary(
+  filters: DashboardFilters,
+  { dataVersion, fetchImpl }: VersionedRequestOptions = {},
+) {
   return requestProductApi<DeliveryPerformanceSummary>(
     "/api/v1/delivery-performance/summary",
     deliveryPerformanceSummarySchema,
-    { actor: filters.actor, params: scopedParams(filters), fetchImpl },
+    {
+      actor: filters.actor,
+      params: scopedParams(filters),
+      dataVersion,
+      fetchImpl,
+    },
   );
 }
 
-export function getDeliveryIntervals(filters: DashboardFilters, fetchImpl?: Fetch) {
+export function getDeliveryIntervals(
+  filters: DashboardFilters,
+  { dataVersion, fetchImpl }: VersionedRequestOptions = {},
+) {
   return requestProductApi<DeliveryIntervalsPage>(
     "/api/v1/delivery-performance/intervals",
     deliveryIntervalsPageSchema,
@@ -163,6 +184,7 @@ export function getDeliveryIntervals(filters: DashboardFilters, fetchImpl?: Fetc
         page: filters.page,
         limit: filters.limit,
       },
+      dataVersion,
       fetchImpl,
     },
   );
@@ -171,13 +193,14 @@ export function getDeliveryIntervals(filters: DashboardFilters, fetchImpl?: Fetc
 export function getDeliveryIntervalHistory(
   intervalKey: string,
   filters: DashboardFilters,
-  fetchImpl?: Fetch,
+  { dataVersion, fetchImpl }: VersionedRequestOptions = {},
 ) {
   return requestProductApi<DeliveryIntervalHistory>(
     `/api/v1/delivery-performance/intervals/${encodeURIComponent(intervalKey)}/history`,
     deliveryIntervalHistorySchema,
     {
       actor: filters.actor,
+      dataVersion,
       fetchImpl,
     },
   );

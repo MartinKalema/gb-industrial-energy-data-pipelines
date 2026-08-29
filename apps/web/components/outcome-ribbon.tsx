@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DashboardFilters, DeliveryInterval } from "@/lib/contracts";
+import { withProductDataVersion } from "@/lib/data-version";
 import { dashboardQuery } from "@/lib/filters";
 import { formatOperatingDateTime, formatStatus } from "@/lib/format";
 
@@ -24,9 +25,11 @@ export function outcomeClass(interval: DeliveryInterval): string {
 export function OutcomeRibbon({
   intervals,
   filters,
+  dataVersion,
 }: {
   intervals: DeliveryInterval[];
   filters: DashboardFilters;
+  dataVersion: string | undefined;
 }) {
   return (
     <section className="outcome-panel" aria-labelledby="outcome-heading">
@@ -68,7 +71,10 @@ export function OutcomeRibbon({
                 role="listitem"
                 key={interval.interval_key}
                 className={`outcome-segment outcome-segment--${state}`}
-                href={`/delivery-intervals/${encodeURIComponent(interval.interval_key)}?${dashboardQuery(filters)}`}
+                href={`/delivery-intervals/${encodeURIComponent(interval.interval_key)}?${withProductDataVersion(
+                  dashboardQuery(filters),
+                  dataVersion,
+                )}`}
                 aria-label={label}
                 title={label}
               >

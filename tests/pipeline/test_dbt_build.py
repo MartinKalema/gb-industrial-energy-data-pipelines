@@ -3,11 +3,11 @@ from __future__ import annotations
 import ast
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -15,9 +15,9 @@ from ingestion.batch.pipeline import dbt_build
 from ingestion.batch.pipeline.dbt_build import (
     DEFAULT_DBT_TIMEOUT_SECONDS,
     DIMENSIONAL_MART_DBT_STEPS,
-    DbtCommandStep,
     DbtBuildConfig,
     DbtBuildError,
+    DbtCommandStep,
     DbtRemoteCleanupError,
     TrinoAttemptQueryController,
     _managed_command,
@@ -291,14 +291,20 @@ def test_governed_dbt_steps_cover_every_model_and_test_exactly_once() -> None:
             70,
         ),
     ]
-    assert sum(
-        int(step.expected_model_result_count or 0)
-        for step in DIMENSIONAL_MART_DBT_STEPS
-    ) == 57
-    assert sum(
-        int(step.expected_test_result_count or 0)
-        for step in DIMENSIONAL_MART_DBT_STEPS
-    ) == 313
+    assert (
+        sum(
+            int(step.expected_model_result_count or 0)
+            for step in DIMENSIONAL_MART_DBT_STEPS
+        )
+        == 57
+    )
+    assert (
+        sum(
+            int(step.expected_test_result_count or 0)
+            for step in DIMENSIONAL_MART_DBT_STEPS
+        )
+        == 313
+    )
 
 
 def test_governed_dbt_selectors_match_the_real_project_graph(
@@ -791,8 +797,9 @@ def test_interrupted_local_process_cleanup_is_nonretryable(
         )
 
 
-def test_trino_cleanup_cancels_only_matching_active_attempt_and_waits_until_quiet(
-) -> None:
+def test_trino_cleanup_cancels_only_matching_active_attempt_and_waits_until_quiet() -> (
+    None
+):
     attempt_tag = "steam-delivery-dbt-0123456789abcdefabcd-try-02"
     query_lists = [
         [
@@ -944,9 +951,7 @@ def test_workflow_requires_matching_published_coverage_and_persists_summary(
     assert result["status"] == "succeeded"
     assert result["result_count"] == 370
     assert result["coverage_payload_sha256"] == "a" * 64
-    assert result["result_path"].endswith(
-        "/build_dimensional_mart/try-02.result.json"
-    )
+    assert result["result_path"].endswith("/build_dimensional_mart/try-02.result.json")
     persisted = json.loads(Path(result["result_path"]).read_text())
     assert persisted == result
 
@@ -1028,9 +1033,7 @@ def test_workflow_persists_each_dbt_step_in_its_own_checkpoint_directory(
     assert staging["result_path"].endswith(
         "/prepare_and_test_loaded_data/try-02.result.json"
     )
-    assert marts["result_path"].endswith(
-        "/build_dimension_tables/try-02.result.json"
-    )
+    assert marts["result_path"].endswith("/build_dimension_tables/try-02.result.json")
     assert staging["result_path"] != marts["result_path"]
     assert json.loads(Path(staging["result_path"]).read_text()) == staging
     assert json.loads(Path(marts["result_path"]).read_text()) == marts
@@ -1051,15 +1054,20 @@ def test_mart_project_keeps_the_full_rebuild_baseline() -> None:
         if path.suffix in {".sql", ".yml", ".yaml"}
     )
 
-    assert re.search(
-        r"materialized\s*[:=]\s*['\"]?incremental",
-        model_text,
-    ) is None
+    assert (
+        re.search(
+            r"materialized\s*[:=]\s*['\"]?incremental",
+            model_text,
+        )
+        is None
+    )
 
 
 def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() -> None:
     repository_root = Path(__file__).resolve().parents[2]
-    dag_path = repository_root / "orchestration" / "dags" / "steam_delivery_data_pipeline.py"
+    dag_path = (
+        repository_root / "orchestration" / "dags" / "steam_delivery_data_pipeline.py"
+    )
     module = ast.parse(dag_path.read_text())
     pipeline_function = next(
         node
@@ -1112,17 +1120,13 @@ def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() ->
     assert timeout_minutes.value == 125
 
     retry_count = next(
-        keyword.value
-        for keyword in task_decorator.keywords
-        if keyword.arg == "retries"
+        keyword.value for keyword in task_decorator.keywords if keyword.arg == "retries"
     )
     assert isinstance(retry_count, ast.Constant)
     assert retry_count.value == 1
 
     pool_name = next(
-        keyword.value
-        for keyword in task_decorator.keywords
-        if keyword.arg == "pool"
+        keyword.value for keyword in task_decorator.keywords if keyword.arg == "pool"
     )
     assert isinstance(pool_name, ast.Constant)
     assert pool_name.value == "iceberg_writer"
@@ -1200,9 +1204,10 @@ def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() ->
             for decorator in node.decorator_list
         )
     )
-    # Seven source/control task definitions are instantiated once. The generic
-    # dbt definition is instantiated through six named overrides.
-    assert task_function_count - 1 + len(checkpoint_assignments) == 13
+    # Seven source/control tasks and the frontend publication task are
+    # instantiated once. The generic dbt definition is instantiated through
+    # six named overrides.
+    assert task_function_count - 1 + len(checkpoint_assignments) == 14
 
     def flattened_dependencies(node: ast.AST) -> list[str]:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.RShift):
@@ -1218,6 +1223,5 @@ def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() ->
         for node in pipeline_function.body
         if isinstance(node, ast.Expr)
     ]
-    assert [name for name, _task_id, _step_name in checkpoint_assignments] in (
-        dependency_chains
-    )
+    checkpoint_names = [name for name, _task_id, _step_name in checkpoint_assignments]
+    assert [*checkpoint_names, "clickhouse_publication"] in dependency_chains

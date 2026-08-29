@@ -10,6 +10,7 @@ const filters: DashboardFilters = {
   page: 1,
   limit: 25,
 };
+const dataVersion = `publication-${"a".repeat(32)}`;
 
 const interval: DeliveryInterval = {
   interval_key: "interval-001",
@@ -55,6 +56,7 @@ describe("IntervalTable", () => {
         filters={filters}
         currency="GBP"
         financialColumnLabel="Projected service charge"
+        dataVersion={dataVersion}
       />,
     );
 
@@ -62,6 +64,14 @@ describe("IntervalTable", () => {
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 MWhₜₕ")).not.toBeInTheDocument();
     expect(screen.getByText("26 Aug 2026, 00:00 BST")).toBeVisible();
+    const detailUrl = new URL(
+      screen.getByRole("link", { name: /inspect revision history/i }).getAttribute("href")!,
+      "http://product.local",
+    );
+    expect(detailUrl.searchParams.get("data_version")).toBe(dataVersion);
+    expect(detailUrl.searchParams.get("actor")).toBe(filters.actor);
+    expect(detailUrl.searchParams.get("start_date")).toBe(filters.start);
+    expect(detailUrl.searchParams.get("end_date")).toBe(filters.end);
   });
 
   it("provides an instructive empty state", () => {
@@ -71,6 +81,7 @@ describe("IntervalTable", () => {
         filters={filters}
         currency="GBP"
         financialColumnLabel="Projected service charge"
+        dataVersion={dataVersion}
       />,
     );
     expect(screen.getByRole("heading", { name: /no delivery intervals match/i })).toBeVisible();

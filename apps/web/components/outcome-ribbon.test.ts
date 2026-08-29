@@ -71,7 +71,13 @@ describe("outcome ribbon classification", () => {
       },
     ] as DeliveryInterval[];
 
-    render(OutcomeRibbon({ intervals, filters }));
+    render(
+      OutcomeRibbon({
+        intervals,
+        filters,
+        dataVersion: `publication-${"a".repeat(32)}`,
+      }),
+    );
 
     expect(
       screen.getByRole("listitem", { name: /Sheffield Works \(SITE-001\).*Main steam header \(DP-001\)/ }),
