@@ -78,6 +78,10 @@ describe("delivery performance page publication", () => {
       expect.any(Object),
       { dataVersion: requestedVersion },
     );
+    expect(api.getDeliveryIntervals).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, limit: 200 }),
+      { dataVersion: requestedVersion },
+    );
   });
 
   it("fails closed on a malformed incoming publication", async () => {

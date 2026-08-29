@@ -2,8 +2,8 @@ import { FilterPanel } from "@/components/filter-panel";
 import { DeliveryComparisonChart } from "@/components/delivery-comparison-chart";
 import { IntervalTable } from "@/components/interval-table";
 import { MetricCard } from "@/components/metric-card";
-import { OutcomeRibbon } from "@/components/outcome-ribbon";
 import { Pagination } from "@/components/pagination";
+import { TermGuide } from "@/components/term-guide";
 import { notFound } from "next/navigation";
 import { parseProductDataVersion } from "@/lib/data-version";
 import type { SearchParams } from "@/lib/filters";
@@ -50,12 +50,17 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
   );
   const dataVersion =
     requestedDataVersion ?? contextResult.data.data_version ?? undefined;
-  const [summaryResult, intervalsResult] = await Promise.all([
+  const [summaryResult, intervalsResult, chartIntervalsResult] = await Promise.all([
     getDeliverySummary(filters, { dataVersion }),
     getDeliveryIntervals(filters, { dataVersion }),
+    getDeliveryIntervals(
+      { ...filters, page: 1, limit: 200 },
+      { dataVersion },
+    ),
   ]);
   const summary = summaryResult.data;
   const intervals = intervalsResult.data;
+  const chartIntervals = chartIntervalsResult.data;
   const labels = financialLabelsFromContract(summary.financial_labels);
   const waitingForDataReasons = pendingDataReasons(summary);
 
@@ -65,57 +70,26 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
           <div>
-            <p className="brand-name">Steam Delivery Performance</p>
-          </div>
-        </div>
-        <div className="masthead__status">
-          <span className="live-indicator" aria-hidden="true" />
-          <div>
-            <strong>Data ready</strong>
-            <span>Historical and read-only</span>
+            <h1 id="page-title" className="brand-name">Steam Delivery Performance</h1>
           </div>
         </div>
       </header>
 
-      <main id="main-content">
-        <section className="hero" aria-labelledby="page-title">
-          <div className="hero__copy">
-            <p className="section-kicker">Delivery review</p>
-            <h1 id="page-title">Compare committed and delivered steam.</h1>
-            <p className="hero__lede">
-              Review each 30-minute interval, find shortfalls and excess, and see
-              how corrections changed the result.
-            </p>
-          </div>
-          <dl className="hero__scope">
-            <div>
-              <dt>Dates</dt>
-              <dd>{filters.start} <span aria-hidden="true">→</span> {filters.end}</dd>
-            </div>
-            <div>
-              <dt>Customers</dt>
-              <dd>{formatCount(contextResult.data.customers.length)}</dd>
-            </div>
-            <div>
-              <dt>Intervals</dt>
-              <dd>{formatCount(summary.interval_count)}</dd>
-            </div>
-          </dl>
-        </section>
-
+      <main id="main-content" aria-labelledby="page-title">
         <div className="workspace-grid">
           <FilterPanel
             filters={filters}
             customers={contextResult.data.customers}
-            identityRole={contextResult.data.identity.role}
+            dataVersion={dataVersion}
           />
 
           <div className="report-column">
-            <section className="metric-section" aria-labelledby="summary-heading">
+            <TermGuide />
+            <section className="metric-section metric-section--overview" aria-labelledby="summary-heading">
               <div className="section-heading-row">
                 <div>
-                  <p className="section-kicker">Available data</p>
-                  <h2 id="summary-heading">Known totals</h2>
+                  <p className="section-kicker">Selected scope</p>
+                  <h2 id="summary-heading">Performance at a glance</h2>
                 </div>
               </div>
               {waitingForDataReasons.length > 0 ? (
@@ -127,7 +101,7 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                   </span>
                 </div>
               ) : null}
-              <div className="metric-grid">
+              <div className="metric-grid metric-grid--overview">
                 <MetricCard
                   eyebrow="Delivered energy"
                   value={formatEnergy(summary.known_delivered_mwh_th)}
@@ -149,20 +123,34 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                   value={formatEnergy(summary.known_excess_mwh_th)}
                   note="Governed excess subtotal for accepted interval evidence."
                 />
-                <MetricCard
-                  eyebrow="Known billable energy"
-                  value={formatEnergy(summary.known_billable_mwh_th)}
-                  note="Billable subtotal returned by the governed mart."
-                />
-                <MetricCard
-                  eyebrow={labels.gross}
-                  value={formatCurrency(
-                    summary.known_gross_earned_revenue_gbp,
-                    summary.currency_code,
-                  )}
-                  note="Known subtotal before an official financial result."
-                />
               </div>
+            </section>
+
+            {chartIntervals.items.length > 0 ? (
+              <DeliveryComparisonChart
+                intervals={chartIntervals.items}
+                total={chartIntervals.total}
+              />
+            ) : null}
+
+            <section className="commercial-strip" aria-labelledby="commercial-heading">
+              <div className="commercial-strip__heading">
+                <p className="section-kicker">Known commercial position</p>
+                <h2 id="commercial-heading">Billable subtotal</h2>
+              </div>
+              <MetricCard
+                eyebrow="Known billable energy"
+                value={formatEnergy(summary.known_billable_mwh_th)}
+                note="Billable subtotal returned by the governed mart."
+              />
+              <MetricCard
+                eyebrow={labels.gross}
+                value={formatCurrency(
+                  summary.known_gross_earned_revenue_gbp,
+                  summary.currency_code,
+                )}
+                note="Known subtotal before an official financial result."
+              />
             </section>
 
             <section className="official-panel" aria-labelledby="official-heading">
@@ -215,16 +203,6 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
               </div>
             </section>
 
-            {intervals.items.length > 0 ? (
-              <>
-                <DeliveryComparisonChart intervals={intervals.items} />
-                <OutcomeRibbon
-                  intervals={intervals.items}
-                  filters={filters}
-                  dataVersion={dataVersion}
-                />
-              </>
-            ) : null}
             <IntervalTable
               intervals={intervals.items}
               filters={filters}
@@ -278,10 +256,6 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
         </div>
       </main>
 
-      <footer className="product-footer">
-        <p>Historical Steam Delivery Performance</p>
-        <p>Simulated business data · Europe/London operating calendar · UTC evidence timestamps</p>
-      </footer>
     </div>
   );
 }

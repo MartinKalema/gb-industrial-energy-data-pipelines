@@ -10,6 +10,7 @@ const filters: DashboardFilters = {
   start: "2026-08-26",
   end: "2026-08-26",
   status: "provisional",
+  deliveryPointId: "DP-001",
   page: 2,
   limit: 25,
 };
@@ -121,6 +122,7 @@ describe("product API client", () => {
 
     expect(url.searchParams.get("start_date")).toBe("2026-08-26");
     expect(url.searchParams.get("end_date")).toBe("2026-08-26");
+    expect(url.searchParams.get("delivery_point_id")).toBe("DP-001");
     expect(url.search).not.toContain("T00");
     expect(init.headers).toMatchObject({
       "X-Product-Data-Version": dataVersion,

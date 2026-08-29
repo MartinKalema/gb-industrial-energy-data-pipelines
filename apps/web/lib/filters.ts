@@ -93,6 +93,7 @@ export function parseDashboardFilters(
     end: validDate(end) ? end : defaults.end,
     customerId: first(params.customer_id) || undefined,
     siteId: first(params.site_id) || undefined,
+    deliveryPointId: first(params.delivery_point_id) || undefined,
     status: status && VALID_STATUSES.has(status) ? status : undefined,
     page: boundedInteger(first(params.page), 1, 100_000),
     limit: boundedInteger(first(params.limit), 25, 200),
@@ -113,6 +114,9 @@ export function dashboardQuery(
   });
   if (value.customerId) query.set("customer_id", value.customerId);
   if (value.siteId) query.set("site_id", value.siteId);
+  if (value.deliveryPointId) {
+    query.set("delivery_point_id", value.deliveryPointId);
+  }
   if (value.status) query.set("status", value.status);
   return query.toString();
 }

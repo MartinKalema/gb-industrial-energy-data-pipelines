@@ -139,6 +139,7 @@ function scopedParams(filters: DashboardFilters) {
     end_date: filters.end,
     customer_id: filters.customerId,
     site_id: filters.siteId,
+    delivery_point_id: filters.deliveryPointId,
     status: filters.status,
   };
 }

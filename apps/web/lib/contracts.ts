@@ -167,6 +167,7 @@ export interface DashboardFilters {
   end: string;
   customerId?: string;
   siteId?: string;
+  deliveryPointId?: string;
   status?: string;
   page: number;
   limit: number;
