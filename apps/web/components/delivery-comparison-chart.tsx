@@ -32,6 +32,12 @@ export const CHART_NAVIGATOR_THRESHOLD = 96;
 
 export const DELIVERY_PROFILE_INTERPOLATION = "stepAfter" as const;
 
+const CHART_MODE_LABELS: Record<ChartMode, string> = {
+  delivery: "Delivery",
+  exceptions: "Shortfall & excess",
+  evidence: "Evidence",
+};
+
 export function shouldShowChartNavigator(pointCount: number): boolean {
   return pointCount > CHART_NAVIGATOR_THRESHOLD;
 }
@@ -444,7 +450,7 @@ export function DeliveryComparisonChart({
         <div className="analysis-tabs" role="group" aria-label="Chart view">
           {([
             ["delivery", "Delivery"],
-            ["exceptions", "Exceptions"],
+            ["exceptions", CHART_MODE_LABELS.exceptions],
             ["evidence", "Evidence"],
           ] as const).map(([value, label]) => (
             <button
@@ -480,7 +486,7 @@ export function DeliveryComparisonChart({
       <div
         id="delivery-analysis-chart"
         role="region"
-        aria-label={`${mode} chart for ${selectedSeries.label}`}
+        aria-label={`${CHART_MODE_LABELS[mode]} chart for ${selectedSeries.label}`}
         className="analysis-chart__body"
       >
         {mode === "delivery" ? (
@@ -591,7 +597,7 @@ export function DeliveryComparisonChart({
               />
               <ReferenceLine y={0} stroke="#17221d" strokeWidth={1.5} />
               <Tooltip content={ChartTooltip} cursor={{ fill: "rgb(43 130 107 / 8%)" }} />
-              <Bar dataKey="exception" name="Governed exception" maxBarSize={28} isAnimationActive={false}>
+              <Bar dataKey="exception" name="Shortfall or excess" maxBarSize={28} isAnimationActive={false}>
                 {data.map((datum) => (
                   <Cell
                     key={datum.intervalKey}
@@ -622,7 +628,7 @@ export function DeliveryComparisonChart({
               {showNavigator ? (
                 <Brush
                   dataKey="timeLabel"
-                  ariaLabel="Choose visible exception time range"
+                  ariaLabel="Choose visible shortfall and excess time range"
                   height={44}
                   travellerWidth={44}
                   stroke="#2b826b"
