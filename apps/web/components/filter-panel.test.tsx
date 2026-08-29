@@ -92,8 +92,8 @@ describe("FilterPanel", () => {
     );
     expect(container.querySelector('input[name="actor"]')).toHaveValue("commercial-manager");
     expect(container.querySelector('input[name="delivery_point_id"]')).toHaveValue("DP-001");
-    expect(screen.getByText("3 active")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Update analysis" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Apply filters" })).toBeVisible();
+    expect(screen.getByRole("link", { name: /Clear 3 filters/ })).toBeVisible();
   });
 
   it("uses Next navigation to apply a view change without stale dependent filters", async () => {
@@ -150,12 +150,30 @@ describe("FilterPanel", () => {
     );
 
     const clearUrl = new URL(
-      screen.getByRole("link", { name: "Clear optional filters" }).getAttribute("href")!,
+      screen.getByRole("link", { name: /Clear 1 filter/ }).getAttribute("href")!,
       "http://product.local",
     );
     expect(clearUrl.searchParams.get("start_date")).toBe("2026-08-26");
     expect(clearUrl.searchParams.get("end_date")).toBe("2026-08-27");
     expect(clearUrl.searchParams.get("data_version")).toBe(dataVersion);
     expect(clearUrl.searchParams.has("customer_id")).toBe(false);
+  });
+
+  it("does not show a meaningless clear action when no optional filters are active", () => {
+    render(
+      <FilterPanel
+        filters={{
+          actor: "commercial-manager",
+          start: "2026-08-26",
+          end: "2026-08-26",
+          page: 1,
+          limit: 25,
+        }}
+        customers={customers}
+        dataVersion={dataVersion}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /Clear \d+ filters?/ })).not.toBeInTheDocument();
   });
 });
