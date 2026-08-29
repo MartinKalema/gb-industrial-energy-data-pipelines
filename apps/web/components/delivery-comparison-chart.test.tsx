@@ -1,8 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import {
+  buildDeliveryChartData,
+  DELIVERY_PROFILE_INTERPOLATION,
   DeliveryComparisonChart,
-  deliveryChartScale,
+  groupDeliveryPointSeries,
 } from "@/components/delivery-comparison-chart";
 import type { DeliveryInterval } from "@/lib/contracts";
 
@@ -41,7 +44,7 @@ function interval(
     net_earned_revenue_gbp: null,
     currency_code: "GBP",
     delivery_measurement_status: delivered === null ? "missing" : "accepted",
-    commitment_status: "final",
+    commitment_status: committed === null ? "missing" : "committed",
     capacity_status: "final",
     sla_result_status: delivered === null ? "provisional" : "final",
     availability_result_status: "final",
@@ -51,108 +54,158 @@ function interval(
 }
 
 const visibleIntervals = [
-  interval("interval-001", 1, "2026-08-25T23:00:00Z", "10.0", "8.0"),
   {
     ...interval("interval-002", 2, "2026-08-25T23:30:00Z", null, "12.0"),
+    shortfall_mwh_th: null,
+    excess_mwh_th: null,
+  },
+  {
+    ...interval("interval-001", 1, "2026-08-25T23:00:00Z", "10.0", "8.0"),
+    shortfall_mwh_th: "2.000000",
+    excess_mwh_th: "0.000000",
+  },
+  {
+    ...interval("interval-003", 1, "2026-08-25T23:00:00Z", "4.0", "4.5"),
     customer_id: "CUST-002",
     customer_name: "South Ceramics",
     site_id: "SITE-002",
     site_name: "South Ceramics Works",
     delivery_point_id: "DP-002",
     delivery_point_name: "Kiln steam header",
+    shortfall_mwh_th: "0.000000",
+    excess_mwh_th: "0.500000",
   },
 ];
 
+Object.defineProperties(HTMLElement.prototype, {
+  hasPointerCapture: { configurable: true, value: vi.fn(() => false) },
+  releasePointerCapture: { configurable: true, value: vi.fn() },
+  scrollIntoView: { configurable: true, value: vi.fn() },
+});
+
+describe("delivery chart data", () => {
+  it("separates delivery points and sorts each series chronologically", () => {
+    const series = groupDeliveryPointSeries(visibleIntervals);
+
+    expect(series).toHaveLength(2);
+    expect(series[0].intervals.map((item) => item.interval_key)).toEqual([
+      "interval-001",
+      "interval-002",
+    ]);
+    expect(series[1].intervals).toHaveLength(1);
+  });
+
+  it("uses governed exception fields and keeps missing distinct from zero", () => {
+    const data = buildDeliveryChartData(visibleIntervals);
+
+    expect(data[0]).toMatchObject({ exception: null, exceptionKind: "unavailable" });
+    expect(data[1]).toMatchObject({ exception: -2, exceptionKind: "shortfall" });
+    expect(data[2]).toMatchObject({ exception: 0.5, exceptionKind: "excess" });
+  });
+
+  it("uses proportionate half-hour gap buckets and discrete step interpolation", () => {
+    const oneHourGap = buildDeliveryChartData([
+      interval("period-3", 3, "2026-08-26T00:00:00Z", "5.0", "4.8"),
+      interval("period-5", 5, "2026-08-26T01:00:00Z", "5.0", "4.7"),
+    ]);
+    const twelveHourGap = buildDeliveryChartData([
+      interval("period-3", 3, "2026-08-26T00:00:00Z", "5.0", "4.8"),
+      interval("period-27", 27, "2026-08-26T12:00:00Z", "5.0", "4.7"),
+    ]);
+
+    expect(oneHourGap.filter((datum) => datum.isGap)).toHaveLength(1);
+    expect(twelveHourGap.filter((datum) => datum.isGap)).toHaveLength(23);
+    expect(twelveHourGap).toHaveLength(25);
+    expect(twelveHourGap[1]).toMatchObject({
+      timestamp: Date.parse("2026-08-26T00:30:00Z"),
+      isGap: true,
+      committed: null,
+      delivered: null,
+      capacity: null,
+    });
+    expect(DELIVERY_PROFILE_INTERPOLATION).toBe("stepAfter");
+  });
+
+  it("does not insert a gap between adjacent half-hour intervals", () => {
+    const adjacent = buildDeliveryChartData([
+      interval("period-3", 3, "2026-08-26T00:00:00Z", "5.0", "4.8"),
+      interval("period-4", 4, "2026-08-26T00:30:00Z", "5.0", "4.7"),
+    ]);
+
+    expect(adjacent.filter((datum) => datum.isGap)).toHaveLength(0);
+  });
+});
+
 describe("DeliveryComparisonChart", () => {
-  it("uses the largest governed visible value as its page scale", () => {
-    expect(deliveryChartScale(visibleIntervals)).toBe(12);
-  });
-
-  it("renders exact accessible comparisons and a visible unavailable marker", () => {
-    const { container } = render(
-      <DeliveryComparisonChart intervals={visibleIntervals} />,
-    );
+  it("provides delivery, exception and evidence views with exact accessible values", async () => {
+    const user = userEvent.setup();
+    render(<DeliveryComparisonChart intervals={visibleIntervals} total={3} />);
 
     expect(
-      screen.getByRole("heading", { name: "Committed versus delivered steam" }),
+      screen.getByRole("heading", { name: "Delivery performance over time" }),
     ).toBeVisible();
-    expect(screen.getByText("12.0 MWhₜₕ")).toBeVisible();
-    expect(screen.getByText("00:00")).toBeVisible();
-    expect(screen.getByText("00:30")).toBeVisible();
-
-    const intervalGroup = screen.getByRole("listitem", {
-      name: /local period 1\. Committed 10\.0 MWhₜₕ\. Delivered 8\.0 MWhₜₕ\./,
-    });
-    expect(intervalGroup).toHaveAttribute("title", expect.stringContaining("26 Aug 2026"));
-    expect(intervalGroup).not.toHaveAttribute("tabindex");
-
-    const missingGroup = screen.getByRole("listitem", {
-      name: /South Ceramics \(CUST-002\), South Ceramics Works \(SITE-002\), Kiln steam header \(DP-002\).*local period 2\. Committed Unavailable\. Delivered 12\.0 MWhₜₕ\./,
-    });
-    expect(screen.getByText("DP-002")).toBeVisible();
-    expect(missingGroup).toHaveAttribute(
-      "title",
-      expect.stringContaining("Kiln steam header (DP-002)"),
+    expect(screen.getByRole("combobox", { name: "Delivery point" })).toHaveTextContent(
+      "North Foundry · North Foundry Works · Main steam header",
     );
-    expect(within(missingGroup).getByText("N/A")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Exact interval chart values" })).toHaveTextContent(
+      "Committed 10.0 MWhₜₕ. Delivered 8.0 MWhₜₕ",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Exceptions" }));
+    expect(screen.getByRole("button", { name: "Exceptions" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Evidence" }));
     expect(
-      container.querySelector(".comparison-bar--unavailable"),
-    ).toHaveClass("comparison-bar--unavailable");
-    expect(
-      screen.getByRole("region", { name: /scroll horizontally/i }),
-    ).toHaveAttribute("tabindex", "0");
+      screen.getByRole("region", { name: /evidence status by interval/i }),
+    ).toBeVisible();
+    expect(screen.getByRole("img", { name: /Commitment.*Missing/i })).toBeVisible();
+
+    await user.click(screen.getByRole("combobox", { name: "Delivery point" }));
+    await user.click(
+      screen.getByRole("option", {
+        name: "South Ceramics · South Ceramics Works · Kiln steam header",
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "Delivery point" })).toHaveTextContent(
+      "South Ceramics",
+    );
   });
 
-  it("explains when every chart value is unavailable", () => {
-    render(
-      <DeliveryComparisonChart
-        intervals={[
-          interval("interval-003", 3, "2026-08-26T00:00:00Z", null, null),
-        ]}
-      />,
-    );
+  it("states when the bounded chart does not cover every matching interval", () => {
+    render(<DeliveryComparisonChart intervals={visibleIntervals} total={250} />);
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      /values are unavailable for every interval/i,
+      /first 3 of 250 matching intervals/i,
     );
   });
 
-  it("keeps a real zero distinct from an unavailable value", () => {
-    render(
-      <DeliveryComparisonChart
-        intervals={[
-          interval("interval-004", 4, "2026-08-26T00:30:00Z", "0.0", "0.0"),
-        ]}
-      />,
-    );
+  it("distinguishes not-applicable, waiting, missing and rejected evidence", async () => {
+    const user = userEvent.setup();
+    const governedStates = {
+      ...interval("interval-004", 4, "2026-08-26T00:30:00Z", "0.0", null),
+      commitment_status: "no_commitment",
+      delivery_measurement_status: "unit_mismatch",
+      capacity_status: "provisional",
+      financial_result_status: "not_applicable",
+    };
+    render(<DeliveryComparisonChart intervals={[governedStates]} total={1} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent(/real zero/i);
-    expect(screen.queryByText("N/A")).not.toBeInTheDocument();
-  });
+    await user.click(screen.getByRole("button", { name: "Evidence" }));
 
-  it("preserves six-decimal governed values in the scale, tooltip, and description", () => {
-    render(
-      <DeliveryComparisonChart
-        intervals={[
-          interval(
-            "interval-005",
-            5,
-            "2026-08-26T01:00:00Z",
-            "0.004000",
-            "0.003500",
-          ),
-        ]}
-      />,
+    expect(screen.getByRole("img", { name: /Commitment.*No Commitment/i })).toHaveClass(
+      "evidence-cell--not-applicable",
     );
-
-    expect(screen.getByText("0.004000 MWhₜₕ")).toBeVisible();
-    const group = screen.getByRole("listitem", {
-      name: /Committed 0\.004000 MWhₜₕ\. Delivered 0\.003500 MWhₜₕ\./,
-    });
-    expect(group).toHaveAttribute(
-      "title",
-      expect.stringContaining("Committed 0.004000 MWhₜₕ"),
+    expect(screen.getByRole("img", { name: /Delivery.*Unit Mismatch/i })).toHaveClass(
+      "evidence-cell--invalid",
     );
-    expect(screen.getByText(/Exact labels and descriptions preserve/)).toBeVisible();
+    expect(screen.getByRole("img", { name: /Capacity.*Waiting for data/i })).toHaveClass(
+      "evidence-cell--waiting",
+    );
+    const waitingSignal = screen.getByText("Waiting for evidence").closest("div");
+    expect(waitingSignal).not.toBeNull();
+    expect(within(waitingSignal!).getByText("1")).toBeVisible();
   });
 });

@@ -1,10 +1,15 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { DashboardSelect } from "@/components/dashboard-select";
 import type { CustomerOption, DashboardFilters } from "@/lib/contracts";
 import { DEMO_ACTORS } from "@/lib/contracts";
 
 interface FilterPanelProps {
   filters: DashboardFilters;
   customers: CustomerOption[];
-  identityRole: string;
+  dataVersion: string | undefined;
 }
 
 const STATUS_OPTIONS = [
@@ -20,51 +25,112 @@ const STATUS_OPTIONS = [
 export function FilterPanel({
   filters,
   customers,
-  identityRole,
+  dataVersion,
 }: FilterPanelProps) {
-  const selectedActor =
-    DEMO_ACTORS.find((actor) => actor.id === filters.actor) ?? DEMO_ACTORS[0];
+  const router = useRouter();
+  const [selectedActor, setSelectedActor] = useState(filters.actor);
+  const [selectedCustomer, setSelectedCustomer] = useState(filters.customerId ?? "");
+  const [selectedSite, setSelectedSite] = useState(filters.siteId ?? "");
+  const [selectedDeliveryPoint, setSelectedDeliveryPoint] = useState(
+    filters.deliveryPointId ?? "",
+  );
+  const [selectedStatus, setSelectedStatus] = useState(filters.status ?? "");
+  const actorCustomerId = selectedActor === "customer-cust-001"
+    ? "CUST-001"
+    : selectedActor === "customer-cust-002"
+      ? "CUST-002"
+      : null;
+  const authorizedCustomers = actorCustomerId
+    ? customers.filter((customer) => customer.customer_id === actorCustomerId)
+    : customers;
+  const customersInScope = selectedCustomer
+    ? authorizedCustomers.filter((customer) => customer.customer_id === selectedCustomer)
+    : authorizedCustomers;
+  const deliveryPointSites = customersInScope.flatMap((customer) =>
+    customer.sites.filter(
+      (site) => !selectedSite || site.site_id === selectedSite,
+    ),
+  );
+  const deliveryPoints = deliveryPointSites.flatMap((site) =>
+    site.delivery_points.map((deliveryPoint) => {
+      const customer = authorizedCustomers.find((candidate) =>
+        candidate.sites.some((candidateSite) => candidateSite.site_id === site.site_id),
+      );
+      return {
+        ...deliveryPoint,
+        siteName: site.site_name,
+        customerName: customer?.display_name ?? "Customer",
+      };
+    }),
+  );
+  const activeFilterCount = [
+    selectedCustomer,
+    selectedSite,
+    selectedDeliveryPoint,
+    selectedStatus,
+  ].filter(Boolean).length;
+  const clearQuery = new URLSearchParams({
+    actor: filters.actor,
+    start_date: filters.start,
+    end_date: filters.end,
+    page: "1",
+    limit: String(filters.limit),
+  });
+  if (dataVersion) clearQuery.set("data_version", dataVersion);
+
+  function switchActor(actor: typeof selectedActor) {
+    setSelectedActor(actor);
+    const nextScope = new URLSearchParams({
+      actor,
+      start_date: filters.start,
+      end_date: filters.end,
+      page: "1",
+      limit: String(filters.limit),
+    });
+    if (dataVersion) nextScope.set("data_version", dataVersion);
+    router.push(`/?${nextScope.toString()}`);
+  }
 
   return (
     <aside className="filter-panel" aria-labelledby="scope-heading">
       <div className="filter-panel__heading">
-        <p className="section-kicker">Investigation scope</p>
-        <h2 id="scope-heading">Choose the evidence window</h2>
+        <div>
+          <h2 id="scope-heading">Filters</h2>
+        </div>
+        <span className="filter-count" aria-label={`${activeFilterCount} optional filters active`}>
+          {activeFilterCount} active
+        </span>
       </div>
 
-      <form action="/" method="get" className="persona-form">
-        <fieldset className="persona-fieldset">
-          <legend>Demo persona</legend>
-          <p className="field-help">
-            Local authorization demonstration — this is not a production login.
-          </p>
-          <label className="field-label" htmlFor="actor">
-            View as
-          </label>
-          <select id="actor" name="actor" defaultValue={filters.actor}>
-            {DEMO_ACTORS.map((actor) => (
-              <option key={actor.id} value={actor.id}>
-                {actor.label}
-              </option>
-            ))}
-          </select>
-          <p className="actor-scope">
-            Scope: <strong>{selectedActor.description}</strong>
-            <span className="sr-only">. API role: {identityRole}</span>
-          </p>
-          <button className="secondary-button" type="submit">
-            Switch view
-          </button>
-        </fieldset>
-      </form>
-
       <form action="/" method="get" className="filter-form">
-        <input type="hidden" name="actor" value={filters.actor} />
-        <div className="date-pair">
-          <div>
-            <label className="field-label" htmlFor="start">
-              From
-            </label>
+        {dataVersion ? <input type="hidden" name="data_version" value={dataVersion} /> : null}
+        <div className="filter-field">
+          <label className="field-label" htmlFor="actor">
+            View
+          </label>
+          <DashboardSelect
+            id="actor"
+            name="actor"
+            value={selectedActor}
+            groups={[{
+              options: DEMO_ACTORS.map((actor) => ({
+                value: actor.id,
+                label: actor.label,
+              })),
+            }]}
+            onValueChange={(actor) => {
+              setSelectedCustomer("");
+              setSelectedSite("");
+              setSelectedDeliveryPoint("");
+              switchActor(actor as typeof selectedActor);
+            }}
+          />
+        </div>
+
+        <div className="filter-field filter-field--date">
+          <label className="field-label" htmlFor="start">
+            From
+          </label>
             <input
               id="start"
               name="start_date"
@@ -72,11 +138,11 @@ export function FilterPanel({
               defaultValue={filters.start}
               required
             />
-          </div>
-          <div>
-            <label className="field-label" htmlFor="end">
-              Through
-            </label>
+        </div>
+        <div className="filter-field filter-field--date">
+          <label className="field-label" htmlFor="end">
+            Through
+          </label>
             <input
               id="end"
               name="end_date"
@@ -84,71 +150,104 @@ export function FilterPanel({
               defaultValue={filters.end}
               required
             />
-          </div>
         </div>
-        <p className="field-help">
-          Dates are inclusive Europe/London operating dates. Choose no more than
-          31 days.
-        </p>
 
-        <div>
+        <div className="filter-field">
           <label className="field-label" htmlFor="customer_id">
             Customer
           </label>
-          <select
+          <DashboardSelect
             id="customer_id"
             name="customer_id"
-            defaultValue={filters.customerId ?? ""}
-          >
-            <option value="">All customers in scope</option>
-            {customers.map((customer) => (
-              <option key={customer.customer_id} value={customer.customer_id}>
-                {customer.display_name}
-              </option>
-            ))}
-          </select>
+            value={selectedCustomer}
+            groups={[{
+              options: [
+                { value: "", label: "All customers" },
+                ...authorizedCustomers.map((customer) => ({
+                  value: customer.customer_id,
+                  label: customer.display_name,
+                })),
+              ],
+            }]}
+            onValueChange={(customerId) => {
+              setSelectedCustomer(customerId);
+              setSelectedSite("");
+              setSelectedDeliveryPoint("");
+            }}
+          />
         </div>
 
-        <div>
+        <div className="filter-field">
           <label className="field-label" htmlFor="site_id">
             Industrial site
           </label>
-          <select
+          <DashboardSelect
             id="site_id"
             name="site_id"
-            defaultValue={filters.siteId ?? ""}
-          >
-            <option value="">All sites in scope</option>
-            {customers.map((customer) => (
-              <optgroup key={customer.customer_id} label={customer.display_name}>
-                {customer.sites.map((site) => (
-                  <option key={site.site_id} value={site.site_id}>
-                    {site.site_name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            value={selectedSite}
+            groups={[
+              { options: [{ value: "", label: "All sites" }] },
+              ...customersInScope.map((customer) => ({
+                label: customer.display_name,
+                options: customer.sites.map((site) => ({
+                  value: site.site_id,
+                  label: site.site_name,
+                })),
+              })),
+            ]}
+            onValueChange={(siteId) => {
+              setSelectedSite(siteId);
+              setSelectedDeliveryPoint("");
+            }}
+          />
         </div>
 
-        <div>
+        <div className="filter-field">
+          <label className="field-label" htmlFor="delivery_point_id">
+            Delivery point
+          </label>
+          <DashboardSelect
+            id="delivery_point_id"
+            name="delivery_point_id"
+            value={selectedDeliveryPoint}
+            groups={[{
+              options: [
+                { value: "", label: "All delivery points" },
+                ...deliveryPoints.map((deliveryPoint) => ({
+                  value: deliveryPoint.delivery_point_id,
+                  label: `${deliveryPoint.customerName} · ${deliveryPoint.siteName} · ${deliveryPoint.delivery_point_name}`,
+                })),
+              ],
+            }]}
+            onValueChange={setSelectedDeliveryPoint}
+          />
+        </div>
+
+        <div className="filter-field">
           <label className="field-label" htmlFor="status">
             Delivery state
           </label>
-          <select id="status" name="status" defaultValue={filters.status ?? ""}>
-            {STATUS_OPTIONS.map(([value, label]) => (
-              <option key={label} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
+          <DashboardSelect
+            id="status"
+            name="status"
+            value={selectedStatus}
+            groups={[{
+              options: STATUS_OPTIONS.map(([value, label]) => ({ value, label })),
+            }]}
+            onValueChange={setSelectedStatus}
+          />
         </div>
 
         <input type="hidden" name="page" value="1" />
         <input type="hidden" name="limit" value={String(filters.limit)} />
-        <button className="primary-button" type="submit">
-          Apply investigation scope
-        </button>
+        <div className="filter-actions">
+          <button className="primary-button" type="submit">
+            Update analysis
+          </button>
+          <a className="clear-filter-link" href={`/?${clearQuery.toString()}`}>
+            Clear optional filters
+          </a>
+        </div>
       </form>
     </aside>
   );

@@ -10,6 +10,7 @@ const filters: DashboardFilters = {
   end: "2026-08-28",
   customerId: "CUST-001",
   siteId: "SITE-001",
+  deliveryPointId: "DP-001",
   status: "shortfall",
   page: 2,
   limit: 25,
@@ -35,6 +36,9 @@ describe("Pagination", () => {
       expect(url.searchParams.get("end_date")).toBe(filters.end);
       expect(url.searchParams.get("customer_id")).toBe(filters.customerId);
       expect(url.searchParams.get("site_id")).toBe(filters.siteId);
+      expect(url.searchParams.get("delivery_point_id")).toBe(
+        filters.deliveryPointId,
+      );
       expect(url.searchParams.get("status")).toBe(filters.status);
       expect(url.searchParams.get("page")).toBe(page);
       expect(url.searchParams.get("limit")).toBe("25");

@@ -40,6 +40,14 @@ describe("dashboard filters", () => {
     expect(parseDashboardFilters({ status: "accepted" }).status).toBeUndefined();
   });
 
+  it("preserves an optional delivery-point scope", () => {
+    const filters = parseDashboardFilters({ delivery_point_id: "DP-001" });
+    expect(filters.deliveryPointId).toBe("DP-001");
+
+    const query = new URLSearchParams(dashboardQuery(filters));
+    expect(query.get("delivery_point_id")).toBe("DP-001");
+  });
+
   it("emits inclusive reporting-date parameters, not UTC timestamp boundaries", () => {
     const query = dashboardQuery({
       actor: "commercial-manager",

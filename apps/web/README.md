@@ -10,8 +10,14 @@ The interface deliberately distinguishes:
 - known energy and financial subtotals that can support an investigation;
 - official SLA, availability, penalty/credit, and net values that are only
   shown when the API says the relevant result is final;
-- provisional, missing, corrected, and superseded evidence;
+- waiting, missing, corrected, and superseded evidence;
 - `null`, which is always displayed as **Unavailable** and never as zero.
+
+The dashboard opens directly on a compact horizontal filter bar and the
+analysis. Its collapsible term guide explains governed labels in plain English.
+The interactive interval chart separates delivery points and provides Delivery,
+Exceptions, and Evidence views; the paginated interval table remains the exact
+record-level view.
 
 ## Run locally
 
@@ -45,10 +51,11 @@ production login. The server sends the selected identity in the
 - `customer-cust-001`
 - `customer-cust-002`
 
-Persona switching is a separate form that resets customer and site filters.
-This prevents a customer persona from carrying a different customer's scope
-into its next request. The API remains the authorization boundary and must
-return `403` for a cross-customer request.
+Persona switching is part of the horizontal filter bar and navigates immediately,
+resetting customer, site, and delivery-point filters. This prevents a customer
+persona from carrying another customer's scope into its next request. The API
+remains the authorization boundary and must return `403` for a cross-customer
+request.
 
 ## API contract used by the web product
 
@@ -63,8 +70,8 @@ All requests are `GET` requests under `/api/v1`:
 
 Analytical requests use inclusive `start_date` and `end_date` values in the
 `Europe/London` operating calendar. They never convert an operating date into a
-UTC-midnight range. Optional parameters are `customer_id`, `site_id`, `status`,
-`page`, and `limit`. Supported status filters are `final`, `provisional`,
+UTC-midnight range. Optional parameters are `customer_id`, `site_id`,
+`delivery_point_id`, `status`, `page`, and `limit`. Supported status filters are `final`, `provisional`,
 `missing`, `corrected`, `shortfall`, and `excess`.
 
 The page first calls `/context`, then carries its `data_version` through
@@ -106,8 +113,9 @@ npm run build
 
 The component and client tests cover null preservation, British Summer Time
 display, London reporting-date defaults across UTC midnight, persona-scope
-reset, customer/commercial financial wording, runtime contract rejection, and
-the interval outcome signal.
+reset, customer/commercial financial wording, runtime contract rejection,
+plain-English term definitions, and the delivery/exception/evidence chart
+semantics.
 
 ## Production-shaped local container
 
