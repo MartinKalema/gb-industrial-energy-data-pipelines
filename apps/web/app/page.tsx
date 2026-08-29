@@ -105,7 +105,7 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                 <MetricCard
                   eyebrow="Delivered energy"
                   value={formatEnergy(summary.known_delivered_mwh_th)}
-                  note="Subtotal of intervals with accepted delivery evidence."
+                  note="Subtotal of 30-minute periods with accepted delivery evidence."
                   featured
                 />
                 <MetricCard
@@ -116,12 +116,12 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                 <MetricCard
                   eyebrow="Known shortfall"
                   value={formatEnergy(summary.known_shortfall_mwh_th)}
-                  note="Governed shortfall subtotal; no missing interval is treated as zero."
+                  note="Governed shortfall subtotal; no missing period is treated as zero."
                 />
                 <MetricCard
                   eyebrow="Known excess delivery"
                   value={formatEnergy(summary.known_excess_mwh_th)}
-                  note="Governed excess subtotal for accepted interval evidence."
+                  note="Governed excess subtotal for accepted 30-minute period evidence."
                 />
               </div>
             </section>
@@ -158,21 +158,21 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                 <p className="section-kicker">Decision gate</p>
                 <h2 id="official-heading">Official contractual outcomes</h2>
                 <p>
-                  These figures remain unavailable until all required commitments,
-                  applicable capacity and accepted delivery records pass their gates.
-                  Known subtotals above can still support investigation.
+                  These figures remain unavailable until all required commitments
+                  are present, delivery limits are confirmed, and delivery records
+                  are accepted. Known subtotals above can still support investigation.
                 </p>
               </div>
               <div className="official-grid">
                 <MetricCard
                   eyebrow="Delivery completeness"
                   value={formatPercent(summary.delivery_data_completeness_percent)}
-                  note={`${formatCount(summary.accepted_applicable_delivery_count)} of ${formatCount(summary.applicable_interval_count)} applicable intervals accepted.`}
+                  note={`${formatCount(summary.accepted_applicable_delivery_count)} of ${formatCount(summary.applicable_interval_count)} applicable 30-minute periods accepted.`}
                 />
                 <MetricCard
                   eyebrow="Commitment completeness"
                   value={formatPercent(summary.commitment_completeness_percent)}
-                  note={`${formatCount(summary.commitment_record_count)} of ${formatCount(summary.expected_interval_count)} expected interval commitments present.`}
+                  note={`${formatCount(summary.commitment_record_count)} of ${formatCount(summary.expected_interval_count)} expected 30-minute commitments present.`}
                 />
                 <MetricCard
                   eyebrow="SLA attainment"

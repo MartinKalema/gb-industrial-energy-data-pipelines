@@ -29,7 +29,7 @@ export function IntervalTable({
         <p className="empty-state__marker" aria-hidden="true">00</p>
         <div>
           <p className="section-kicker">No matching evidence</p>
-          <h2 id="empty-heading">No delivery intervals match this scope</h2>
+          <h2 id="empty-heading">No 30-minute delivery records match these filters</h2>
           <p>
             Widen the date range or remove a customer, site, or delivery-state
             filter. No zero values have been substituted for absent records.
@@ -44,7 +44,7 @@ export function IntervalTable({
       <div className="section-heading-row">
         <div>
           <p className="section-kicker">Thirty-minute evidence</p>
-          <h2 id="intervals-heading">Delivery interval register</h2>
+          <h2 id="intervals-heading">30-minute delivery records</h2>
         </div>
         <p className="table-panel__hint">Times shown in UTC</p>
       </div>
@@ -52,7 +52,7 @@ export function IntervalTable({
         <table>
           <thead>
             <tr>
-              <th scope="col">Interval</th>
+              <th scope="col">Time period</th>
               <th scope="col">Site / point</th>
               <th scope="col">Committed</th>
               <th scope="col">Delivered</th>
@@ -95,7 +95,7 @@ export function IntervalTable({
                       dashboardQuery(filters),
                       dataVersion,
                     )}`}
-                    aria-label={`Inspect revision history for interval beginning ${formatDateTime(interval.interval_start_at)}`}
+                    aria-label={`Inspect revision history for the 30-minute period beginning ${formatDateTime(interval.interval_start_at)}`}
                   >
                     Inspect <span aria-hidden="true">→</span>
                   </Link>

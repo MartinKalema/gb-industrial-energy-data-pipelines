@@ -60,7 +60,7 @@ describe("pendingDataReasons", () => {
           sla_result_status: "provisional",
         }),
       ),
-    ).toContain("1 interval with a missing or withdrawn commitment");
+    ).toContain("1 30-minute period with a missing or withdrawn commitment");
   });
 
   it("explains a financial-only blocker", () => {
@@ -72,8 +72,19 @@ describe("pendingDataReasons", () => {
         }),
       ),
     ).toEqual([
-      "2 intervals with a financial result still awaiting final evidence",
+      "2 30-minute periods with a financial result still awaiting confirmation",
     ]);
+  });
+
+  it("describes incomplete capacity evidence as an unconfirmed delivery limit", () => {
+    expect(
+      pendingDataReasons(
+        summary({
+          final_applicable_capacity_count: 46,
+          availability_result_status: "provisional",
+        }),
+      ),
+    ).toContain("2 30-minute periods without a confirmed delivery limit");
   });
 
   it("returns no blockers for final results", () => {

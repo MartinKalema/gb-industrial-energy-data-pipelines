@@ -18,10 +18,10 @@ export function Pagination({
   const to = Math.min(filters.page * filters.limit, total);
 
   return (
-    <nav className="pagination" aria-label="Delivery intervals pages">
+    <nav className="pagination" aria-label="30-minute delivery record pages">
       <p>
         Showing <strong>{formatCount(from)}–{formatCount(to)}</strong> of{" "}
-        <strong>{formatCount(total)}</strong> intervals
+        <strong>{formatCount(total)}</strong> 30-minute periods
       </p>
       <div className="pagination__actions">
         {filters.page > 1 ? (

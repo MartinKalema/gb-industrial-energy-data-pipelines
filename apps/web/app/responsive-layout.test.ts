@@ -59,4 +59,19 @@ describe("responsive containment rules", () => {
       /\.evidence-cell--missing\s*\{[^}]*repeating-linear-gradient/s,
     );
   });
+
+  it("enlarges chart legend symbols without enlarging legend text", () => {
+    expect(css).toMatch(
+      /\.analysis-legend\s*\{[^}]*font-size:\s*0\.67rem;/s,
+    );
+    expect(css).toMatch(
+      /\.analysis-legend__mark\s*\{[^}]*width:\s*24px;[^}]*height:\s*4px;/s,
+    );
+    expect(css).toMatch(
+      /\.analysis-legend__mark--zero\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;/s,
+    );
+    expect(css).toMatch(
+      /\.analysis-legend__mark--unavailable\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;/s,
+    );
+  });
 });

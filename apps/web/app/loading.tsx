@@ -4,7 +4,7 @@ export default function Loading() {
       <div className="state-page__signal" aria-hidden="true"><i /><i /><i /><i /></div>
       <p className="section-kicker">Reading governed evidence</p>
       <h1>Preparing the delivery investigation</h1>
-      <p>Loading authorized customers, summary outcomes and interval records.</p>
+      <p>Loading authorized customers, summary outcomes and 30-minute delivery records.</p>
     </main>
   );
 }

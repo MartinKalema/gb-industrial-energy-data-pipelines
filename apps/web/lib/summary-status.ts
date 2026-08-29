@@ -1,7 +1,7 @@
 import type { DeliveryPerformanceSummary } from "@/lib/contracts";
 
-function intervalLabel(count: number): string {
-  return `interval${count === 1 ? "" : "s"}`;
+function periodLabel(count: number): string {
+  return `30-minute period${count === 1 ? "" : "s"}`;
 }
 
 /**
@@ -23,16 +23,16 @@ export function pendingDataReasons(
 
   const reasons = [
     summary.missing_commitment_count > 0
-      ? `${summary.missing_commitment_count} ${intervalLabel(summary.missing_commitment_count)} with a missing or withdrawn commitment`
+      ? `${summary.missing_commitment_count} ${periodLabel(summary.missing_commitment_count)} with a missing or withdrawn commitment`
       : null,
     missingAcceptedDeliveryCount > 0
-      ? `${missingAcceptedDeliveryCount} ${intervalLabel(missingAcceptedDeliveryCount)} without accepted delivery evidence`
+      ? `${missingAcceptedDeliveryCount} ${periodLabel(missingAcceptedDeliveryCount)} without accepted delivery evidence`
       : null,
     nonFinalCapacityCount > 0
-      ? `${nonFinalCapacityCount} ${intervalLabel(nonFinalCapacityCount)} without final capacity evidence`
+      ? `${nonFinalCapacityCount} ${periodLabel(nonFinalCapacityCount)} without a confirmed delivery limit`
       : null,
     summary.non_final_financial_count > 0
-      ? `${summary.non_final_financial_count} ${intervalLabel(summary.non_final_financial_count)} with a financial result still awaiting final evidence`
+      ? `${summary.non_final_financial_count} ${periodLabel(summary.non_final_financial_count)} with a financial result still awaiting confirmation`
       : null,
   ].filter((reason): reason is string => reason !== null);
 

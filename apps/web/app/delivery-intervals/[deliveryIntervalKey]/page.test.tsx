@@ -117,7 +117,7 @@ describe("delivery interval history page", () => {
 
     render(page);
     const backUrl = new URL(
-      screen.getByRole("link", { name: /back to interval register/i }).getAttribute("href")!,
+      screen.getByRole("link", { name: /back to delivery records/i }).getAttribute("href")!,
       "http://product.local",
     );
     expect(backUrl.searchParams.get("data_version")).toBe(requestedVersion);

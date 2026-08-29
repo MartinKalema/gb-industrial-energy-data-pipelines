@@ -146,6 +146,13 @@ function evidenceTone(kind: EvidenceKind, status: string): EvidenceTone {
   return "invalid";
 }
 
+function evidenceStatusLabel(kind: EvidenceKind, status: string): string {
+  if (kind === "capacity" && status.toLowerCase() === "final") {
+    return "Confirmed";
+  }
+  return formatStatus(status);
+}
+
 export function buildDeliveryChartData(intervals: DeliveryInterval[]): ChartDatum[] {
   const data: ChartDatum[] = [];
   let previous: DeliveryInterval | null = null;
@@ -264,12 +271,12 @@ function ChartTooltip({ active, payload }: TooltipContentProps) {
       <dl>
         <div><dt>Committed</dt><dd>{formatGovernedEnergy(interval.committed_mwh_th)}</dd></div>
         <div><dt>Delivered</dt><dd>{formatGovernedEnergy(interval.delivered_mwh_th)}</dd></div>
-        <div><dt>Capacity</dt><dd>{formatGovernedEnergy(interval.deliverable_capacity_mwh_th)}</dd></div>
+        <div><dt>Confirmed delivery limit</dt><dd>{formatGovernedEnergy(interval.deliverable_capacity_mwh_th)}</dd></div>
         <div><dt>Shortfall</dt><dd>{formatGovernedEnergy(interval.shortfall_mwh_th)}</dd></div>
         <div><dt>Excess</dt><dd>{formatGovernedEnergy(interval.excess_mwh_th)}</dd></div>
       </dl>
       <p className="analysis-tooltip__status">
-        Commitment {formatStatus(interval.commitment_status)} · Delivery {formatStatus(interval.delivery_measurement_status)} · Capacity {formatStatus(interval.capacity_status)}
+        Commitment {formatStatus(interval.commitment_status)} · Delivery {formatStatus(interval.delivery_measurement_status)} · Delivery limit {evidenceStatusLabel("capacity", interval.capacity_status)}
       </p>
     </div>
   );
@@ -288,7 +295,7 @@ function EvidenceTracks({ data }: { data: ActualChartDatum[] }) {
       status: (interval: DeliveryInterval) => interval.delivery_measurement_status,
     },
     {
-      label: "Capacity",
+      label: "Delivery limit",
       kind: "capacity" as const,
       status: (interval: DeliveryInterval) => interval.capacity_status,
     },
@@ -304,7 +311,7 @@ function EvidenceTracks({ data }: { data: ActualChartDatum[] }) {
     <div
       className="evidence-chart__scroll"
       role="region"
-      aria-label="Evidence status by interval; scroll horizontally for more intervals"
+      aria-label="Evidence status by 30-minute period; scroll horizontally for more periods"
       tabIndex={0}
     >
       <div className="evidence-chart" style={{ width }}>
@@ -322,7 +329,7 @@ function EvidenceTracks({ data }: { data: ActualChartDatum[] }) {
                 const status = row.status(datum.interval);
                 const description = `${row.label}, ${formatOperatingDateTime(
                   datum.interval.interval_start_at,
-                )}: ${formatStatus(status)}`;
+                )}: ${evidenceStatusLabel(row.kind, status)}`;
                 return (
                   <span
                     key={datum.intervalKey}
@@ -346,7 +353,7 @@ function ChartLegend({ mode }: { mode: ChartMode }) {
     ? [
         ["commitment", "Committed"],
         ["delivery", "Delivered"],
-        ["capacity", "Final capacity"],
+        ["capacity", "Confirmed delivery limit"],
       ]
     : mode === "exceptions"
       ? [
@@ -356,7 +363,7 @@ function ChartLegend({ mode }: { mode: ChartMode }) {
           ["unavailable", "Unavailable"],
         ]
       : [
-          ["final", "Final / accepted"],
+          ["final", "Confirmed / accepted"],
           ["not-applicable", "Not applicable"],
           ["waiting", "Waiting for data"],
           ["missing", "Missing / withdrawn"],
@@ -409,12 +416,12 @@ export function DeliveryComparisonChart({
     <section className="comparison-panel" aria-labelledby="comparison-heading">
       <div className="analysis-chart__header">
         <div>
-          <p className="section-kicker">Interval analysis</p>
+          <p className="section-kicker">30-minute analysis</p>
           <h2 id="comparison-heading">Delivery performance over time</h2>
           <p className="comparison-panel__description">
-            Explore the full bounded chart scope independently of the paginated
-            interval register below. Gaps mean evidence is unavailable; they are
-            never drawn as zero.
+            Explore the selected date range independently of the paginated
+            30-minute delivery records below. Gaps mean evidence is unavailable;
+            they are never drawn as zero.
           </p>
         </div>
         <div className="analysis-chart__series-picker">
@@ -455,7 +462,7 @@ export function DeliveryComparisonChart({
       </div>
 
       <dl className="analysis-chart__signals">
-        <div><dt>Intervals shown</dt><dd>{actualData.length}</dd></div>
+        <div><dt>Periods shown</dt><dd>{actualData.length}</dd></div>
         <div><dt>With shortfall</dt><dd>{shortfallCount}</dd></div>
         <div><dt>With excess</dt><dd>{excessCount}</dd></div>
         <div><dt>Waiting for evidence</dt><dd>{waitingCount}</dd></div>
@@ -464,8 +471,8 @@ export function DeliveryComparisonChart({
       {total > intervals.length ? (
         <p className="analysis-chart__coverage" role="status">
           The chart request loaded the first {intervals.length} of {total}{" "}
-          matching intervals. This delivery-point series may therefore be
-          incomplete. Narrow the filters to inspect every interval in one
+          matching 30-minute periods. This delivery-point series may therefore be
+          incomplete. Narrow the filters to inspect every period in one
           continuous view.
         </p>
       ) : null}
@@ -482,7 +489,7 @@ export function DeliveryComparisonChart({
               data={data}
               accessibilityLayer
               role="img"
-              aria-label={`Committed, delivered and final capacity for ${selectedSeries.label}`}
+              aria-label={`Committed, delivered and confirmed delivery limit for ${selectedSeries.label}`}
               desc="Thirty-minute energy profile. Missing values break the line instead of being shown as zero."
               margin={{ top: 18, right: 22, bottom: 12, left: 6 }}
             >
@@ -529,7 +536,7 @@ export function DeliveryComparisonChart({
               <Line
                 type="stepAfter"
                 dataKey="capacity"
-                name="Final capacity"
+                name="Confirmed delivery limit"
                 stroke="#2b826b"
                 strokeWidth={2}
                 strokeDasharray="2 5"
@@ -629,13 +636,13 @@ export function DeliveryComparisonChart({
         )}
       </div>
 
-      <div className="sr-only" role="list" aria-label="Exact interval chart values">
+      <div className="sr-only" role="list" aria-label="Exact 30-minute period values">
         {actualData.map((datum) => (
           <p role="listitem" key={datum.intervalKey}>
             {formatOperatingDateTime(datum.interval.interval_start_at)}.
             Committed {formatGovernedEnergy(datum.interval.committed_mwh_th)}.
             Delivered {formatGovernedEnergy(datum.interval.delivered_mwh_th)}.
-            Capacity {formatGovernedEnergy(datum.interval.deliverable_capacity_mwh_th)}.
+            Confirmed delivery limit {formatGovernedEnergy(datum.interval.deliverable_capacity_mwh_th)}.
             Shortfall {formatGovernedEnergy(datum.interval.shortfall_mwh_th)}.
             Excess {formatGovernedEnergy(datum.interval.excess_mwh_th)}.
           </p>
@@ -645,7 +652,7 @@ export function DeliveryComparisonChart({
         Hover, tap, or use the chart keyboard controls to inspect exact governed
         values.
         {mode === "evidence"
-          ? " Scroll the evidence matrix horizontally to inspect later intervals."
+          ? " Scroll the evidence matrix horizontally to inspect later periods."
           : showNavigator
             ? " Use the navigator to focus on part of this longer series."
             : " The complete selected series fits without a separate navigator."}
