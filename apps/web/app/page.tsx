@@ -1,5 +1,6 @@
 import { FilterPanel } from "@/components/filter-panel";
 import { DeliveryComparisonChart } from "@/components/delivery-comparison-chart";
+import { DataStatusNotice } from "@/components/data-status-notice";
 import { IntervalTable } from "@/components/interval-table";
 import { MetricCard } from "@/components/metric-card";
 import { Pagination } from "@/components/pagination";
@@ -92,15 +93,7 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
                   <h2 id="summary-heading">Performance at a glance</h2>
                 </div>
               </div>
-              {waitingForDataReasons.length > 0 ? (
-                <div className="data-status-notice" role="status">
-                  <strong>Some official results are waiting for data.</strong>
-                  <span>
-                    Why: {waitingForDataReasons.join("; ")}. Known totals
-                    below remain available.
-                  </span>
-                </div>
-              ) : null}
+              <DataStatusNotice reasons={waitingForDataReasons} />
               <div className="metric-grid metric-grid--overview">
                 <MetricCard
                   eyebrow="Delivered energy"

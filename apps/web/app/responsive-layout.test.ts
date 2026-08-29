@@ -74,4 +74,19 @@ describe("responsive containment rules", () => {
       /\.analysis-legend__mark--unavailable\s*\{[^}]*width:\s*14px;[^}]*height:\s*14px;/s,
     );
   });
+
+  it("lays out evidence gaps as cards and stacks them on small screens", () => {
+    expect(css).toMatch(
+      /\.data-status-notice\s*\{[^}]*grid-template-columns:\s*minmax\(220px, 0\.62fr\) minmax\(0, 1\.38fr\);/s,
+    );
+    expect(css).toMatch(
+      /\.data-status-notice ul\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.data-status-notice\s*\{[^}]*grid-template-columns:\s*1fr;/,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.analysis-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/,
+    );
+  });
 });

@@ -16,7 +16,7 @@ The interface deliberately distinguishes:
 The dashboard opens directly on a compact horizontal filter bar and the
 analysis. Its collapsible term guide explains governed labels in plain English.
 The interactive interval chart separates delivery points and provides Delivery,
-Exceptions, and Evidence views; the paginated interval table remains the exact
+Shortfall & excess, and Evidence views; the paginated interval table remains the exact
 record-level view.
 
 ## Run locally
@@ -114,7 +114,7 @@ npm run build
 The component and client tests cover null preservation, British Summer Time
 display, London reporting-date defaults across UTC midnight, persona-scope
 reset, customer/commercial financial wording, runtime contract rejection,
-plain-English term definitions, and the delivery/exception/evidence chart
+plain-English term definitions, and the delivery/shortfall-and-excess/evidence chart
 semantics.
 
 ## Production-shaped local container

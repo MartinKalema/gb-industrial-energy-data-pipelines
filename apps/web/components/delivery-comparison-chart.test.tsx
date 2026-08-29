@@ -259,8 +259,8 @@ describe("DeliveryComparisonChart", () => {
       "Committed 10.0 MWhₜₕ. Delivered 8.0 MWhₜₕ",
     );
 
-    await user.click(screen.getByRole("button", { name: "Exceptions" }));
-    expect(screen.getByRole("button", { name: "Exceptions" })).toHaveAttribute(
+    await user.click(screen.getByRole("button", { name: "Shortfall & excess" }));
+    expect(screen.getByRole("button", { name: "Shortfall & excess" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
