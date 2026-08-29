@@ -6,6 +6,9 @@ import {
   DELIVERY_PROFILE_INTERPOLATION,
   DeliveryComparisonChart,
   groupDeliveryPointSeries,
+  RecordedZeroCircle,
+  shouldShowChartNavigator,
+  UnavailableDiamond,
 } from "@/components/delivery-comparison-chart";
 import type { DeliveryInterval } from "@/lib/contracts";
 
@@ -98,9 +101,88 @@ describe("delivery chart data", () => {
   it("uses governed exception fields and keeps missing distinct from zero", () => {
     const data = buildDeliveryChartData(visibleIntervals);
 
-    expect(data[0]).toMatchObject({ exception: null, exceptionKind: "unavailable" });
-    expect(data[1]).toMatchObject({ exception: -2, exceptionKind: "shortfall" });
-    expect(data[2]).toMatchObject({ exception: 0.5, exceptionKind: "excess" });
+    expect(data[0]).toMatchObject({
+      exception: null,
+      exceptionKind: "unavailable",
+      zeroMarker: null,
+      unavailableMarker: 0,
+    });
+    expect(data[1]).toMatchObject({
+      exception: -2,
+      exceptionKind: "shortfall",
+      zeroMarker: null,
+      unavailableMarker: null,
+    });
+    expect(data[2]).toMatchObject({
+      exception: 0.5,
+      exceptionKind: "excess",
+      zeroMarker: null,
+      unavailableMarker: null,
+    });
+  });
+
+  it("assigns zero and unavailable markers only to their own interval row", () => {
+    const recordedZero = {
+      ...interval("recorded-zero", 1, "2026-08-25T23:00:00Z", "5.0", "5.0"),
+      shortfall_mwh_th: "0.000000",
+      excess_mwh_th: "0.000000",
+    };
+    const excess = {
+      ...interval("excess", 2, "2026-08-25T23:30:00Z", "5.0", "5.1"),
+      shortfall_mwh_th: "0.000000",
+      excess_mwh_th: "0.100000",
+    };
+    const unavailable = interval(
+      "unavailable",
+      3,
+      "2026-08-26T00:00:00Z",
+      null,
+      "5.0",
+    );
+
+    const data = buildDeliveryChartData([recordedZero, excess, unavailable]);
+
+    expect(data.map(({ intervalKey, exceptionKind, zeroMarker, unavailableMarker }) => ({
+      intervalKey,
+      exceptionKind,
+      zeroMarker,
+      unavailableMarker,
+    }))).toEqual([
+      {
+        intervalKey: "recorded-zero",
+        exceptionKind: "none",
+        zeroMarker: 0,
+        unavailableMarker: null,
+      },
+      {
+        intervalKey: "excess",
+        exceptionKind: "excess",
+        zeroMarker: null,
+        unavailableMarker: null,
+      },
+      {
+        intervalKey: "unavailable",
+        exceptionKind: "unavailable",
+        zeroMarker: null,
+        unavailableMarker: 0,
+      },
+    ]);
+  });
+
+  it("renders marker shapes only when Recharts supplies a real zero marker", () => {
+    const { container, rerender } = render(
+      <UnavailableDiamond cx={20} cy={30} value={null} />,
+    );
+    expect(container.querySelector("rect")).toBeNull();
+
+    rerender(<UnavailableDiamond cx={20} cy={30} value={0} />);
+    expect(container.querySelector("rect")).toHaveAttribute("x", "16");
+
+    rerender(<RecordedZeroCircle cx={20} cy={30} value={null} />);
+    expect(container.querySelector("circle")).toBeNull();
+
+    rerender(<RecordedZeroCircle cx={20} cy={30} value={0} />);
+    expect(container.querySelector("circle")).toHaveAttribute("cx", "20");
   });
 
   it("uses proportionate half-hour gap buckets and discrete step interpolation", () => {
@@ -133,6 +215,12 @@ describe("delivery chart data", () => {
     ]);
 
     expect(adjacent.filter((datum) => datum.isGap)).toHaveLength(0);
+  });
+
+  it("omits the navigator for normal one-day scopes and keeps it for long series", () => {
+    expect(shouldShowChartNavigator(48)).toBe(false);
+    expect(shouldShowChartNavigator(96)).toBe(false);
+    expect(shouldShowChartNavigator(97)).toBe(true);
   });
 });
 

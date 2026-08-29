@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import {
   Bar,
-  BarChart,
   Brush,
   CartesianGrid,
   Cell,
@@ -11,7 +10,6 @@ import {
   Line,
   ReferenceLine,
   ResponsiveContainer,
-  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -30,8 +28,13 @@ type ChartMode = "delivery" | "exceptions" | "evidence";
 type EvidenceKind = "commitment" | "delivery" | "capacity" | "financial";
 type EvidenceTone = "final" | "not-applicable" | "waiting" | "missing" | "invalid";
 const HALF_HOUR_MS = 30 * 60 * 1000;
+export const CHART_NAVIGATOR_THRESHOLD = 96;
 
 export const DELIVERY_PROFILE_INTERPOLATION = "stepAfter" as const;
+
+export function shouldShowChartNavigator(pointCount: number): boolean {
+  return pointCount > CHART_NAVIGATOR_THRESHOLD;
+}
 
 export interface ChartDatum {
   interval: DeliveryInterval | null;
@@ -44,6 +47,8 @@ export interface ChartDatum {
   capacity: number | null;
   exception: number | null;
   exceptionKind: "shortfall" | "excess" | "none" | "unavailable";
+  zeroMarker: number | null;
+  unavailableMarker: number | null;
 }
 
 export interface DeliveryPointSeries {
@@ -165,6 +170,8 @@ export function buildDeliveryChartData(intervals: DeliveryInterval[]): ChartDatu
           capacity: null,
           exception: null,
           exceptionKind: "unavailable",
+          zeroMarker: null,
+          unavailableMarker: null,
         });
       }
     }
@@ -173,6 +180,7 @@ export function buildDeliveryChartData(intervals: DeliveryInterval[]): ChartDatu
       "en-GB",
       { day: "2-digit", month: "short", timeZone: "UTC" },
     );
+    const governedExceptionResult = governedException(interval);
     data.push({
       interval,
       intervalKey: interval.interval_key,
@@ -184,7 +192,10 @@ export function buildDeliveryChartData(intervals: DeliveryInterval[]): ChartDatu
       committed: numeric(interval.committed_mwh_th),
       delivered: numeric(interval.delivered_mwh_th),
       capacity: numeric(interval.deliverable_capacity_mwh_th),
-      ...governedException(interval),
+      ...governedExceptionResult,
+      zeroMarker: governedExceptionResult.exceptionKind === "none" ? 0 : null,
+      unavailableMarker:
+        governedExceptionResult.exceptionKind === "unavailable" ? 0 : null,
     });
     previous = interval;
   }
@@ -195,6 +206,44 @@ function axisEnergy(value: number): string {
   return new Intl.NumberFormat("en-GB", {
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+interface ExceptionMarkerProps {
+  cx?: number;
+  cy?: number;
+  value?: number | null;
+}
+
+export function RecordedZeroCircle({ cx, cy, value }: ExceptionMarkerProps) {
+  if (value !== 0 || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={4}
+      fill="#f7f7f2"
+      stroke="#17221d"
+      strokeWidth={2}
+    />
+  );
+}
+
+export function UnavailableDiamond({ cx, cy, value }: ExceptionMarkerProps) {
+  if (value !== 0 || !Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+
+  return (
+    <rect
+      x={cx! - 4}
+      y={cy! - 4}
+      width={8}
+      height={8}
+      transform={`rotate(45 ${cx} ${cy})`}
+      fill="#f5e7c9"
+      stroke="#7a5212"
+      strokeWidth={2}
+    />
+  );
 }
 
 function ChartTooltip({ active, payload }: TooltipContentProps) {
@@ -351,12 +400,8 @@ export function DeliveryComparisonChart({
       evidenceTone("financial", datum.interval.financial_result_status),
     ].some((tone) => !["final", "not-applicable"].includes(tone)),
   ).length;
-  const unavailableExceptionMarkers = actualData
-    .filter((datum) => datum.exceptionKind === "unavailable")
-    .map((datum) => ({ ...datum, exception: 0 }));
-  const zeroExceptionMarkers = actualData
-    .filter((datum) => datum.exceptionKind === "none")
-    .map((datum) => ({ ...datum, exception: 0 }));
+  const showNavigator = shouldShowChartNavigator(data.length);
+  const chartHeight = showNavigator ? 365 : 330;
 
   if (!selectedSeries) return null;
 
@@ -432,7 +477,7 @@ export function DeliveryComparisonChart({
         className="analysis-chart__body"
       >
         {mode === "delivery" ? (
-          <ResponsiveContainer width="100%" height={390}>
+          <ResponsiveContainer width="100%" height={chartHeight}>
             <ComposedChart
               data={data}
               accessibilityLayer
@@ -492,7 +537,7 @@ export function DeliveryComparisonChart({
                 connectNulls={false}
                 isAnimationActive={false}
               />
-              {data.length > 18 ? (
+              {showNavigator ? (
                 <Brush
                   dataKey="timeLabel"
                   ariaLabel="Choose visible delivery time range"
@@ -505,8 +550,8 @@ export function DeliveryComparisonChart({
             </ComposedChart>
           </ResponsiveContainer>
         ) : mode === "exceptions" ? (
-          <ResponsiveContainer width="100%" height={390}>
-            <BarChart
+          <ResponsiveContainer width="100%" height={chartHeight}>
+            <ComposedChart
               data={data}
               accessibilityLayer
               role="img"
@@ -549,27 +594,25 @@ export function DeliveryComparisonChart({
                   />
                 ))}
               </Bar>
-              <Scatter
+              <Line
                 name="Recorded zero"
-                data={zeroExceptionMarkers}
-                dataKey="exception"
-                fill="#f7f7f2"
-                stroke="#17221d"
-                strokeWidth={2}
-                shape="circle"
+                dataKey="zeroMarker"
+                stroke="transparent"
+                dot={<RecordedZeroCircle />}
+                activeDot={false}
+                connectNulls={false}
                 isAnimationActive={false}
               />
-              <Scatter
+              <Line
                 name="Unavailable"
-                data={unavailableExceptionMarkers}
-                dataKey="exception"
-                fill="#f5e7c9"
-                stroke="#7a5212"
-                strokeWidth={2}
-                shape="diamond"
+                dataKey="unavailableMarker"
+                stroke="transparent"
+                dot={<UnavailableDiamond />}
+                activeDot={false}
+                connectNulls={false}
                 isAnimationActive={false}
               />
-              {data.length > 18 ? (
+              {showNavigator ? (
                 <Brush
                   dataKey="timeLabel"
                   ariaLabel="Choose visible exception time range"
@@ -579,7 +622,7 @@ export function DeliveryComparisonChart({
                   fill="#f0ede3"
                 />
               ) : null}
-            </BarChart>
+            </ComposedChart>
           </ResponsiveContainer>
         ) : (
           <EvidenceTracks data={actualData} />
@@ -600,8 +643,12 @@ export function DeliveryComparisonChart({
       </div>
       <p className="chart-note">
         Hover, tap, or use the chart keyboard controls to inspect exact governed
-        values. The navigator beneath longer series lets you focus on a smaller
-        time window without changing the filters.
+        values.
+        {mode === "evidence"
+          ? " Scroll the evidence matrix horizontally to inspect later intervals."
+          : showNavigator
+            ? " Use the navigator to focus on part of this longer series."
+            : " The complete selected series fits without a separate navigator."}
       </p>
     </section>
   );
