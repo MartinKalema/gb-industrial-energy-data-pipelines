@@ -3,7 +3,7 @@ name: gb-industrial-energy
 services:
   trino:
     image: trinodb/trino:478
-    profiles: [query, batch]
+    profiles: [query, batch, product]
     environment:
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}
@@ -82,6 +82,45 @@ services:
       retries: 30
       start_period: 30s
     mem_limit: 2g
+
+  historical-delivery-api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    profiles: [product]
+    environment:
+      PRODUCT_DEMO_MODE: ${PRODUCT_DEMO_MODE:-true}
+      TRINO_HOST: trino
+      TRINO_PORT: "8080"
+      TRINO_HTTP_SCHEME: http
+      PRODUCT_TRINO_USER: historical-delivery-api
+      PRODUCT_TRINO_CATALOG: r2
+      PRODUCT_TRINO_SCHEMA: industrial_energy_marts
+      PRODUCT_TRINO_TIMEOUT_SECONDS: ${PRODUCT_TRINO_TIMEOUT_SECONDS:-20}
+      PRODUCT_MAX_QUERY_DAYS: ${PRODUCT_MAX_QUERY_DAYS:-31}
+      PRODUCT_MAX_PAGE_SIZE: ${PRODUCT_MAX_PAGE_SIZE:-200}
+    ports:
+      - "127.0.0.1:${PRODUCT_API_PORT:-8000}:8000"
+    depends_on:
+      trino:
+        condition: service_healthy
+    mem_limit: 512m
+
+  historical-delivery-web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    profiles: [product]
+    environment:
+      PRODUCT_API_URL: http://historical-delivery-api:8000
+      DEFAULT_DEMO_ACTOR: ${PRODUCT_DEFAULT_ACTOR:-commercial-manager}
+      PRODUCT_API_TIMEOUT_MS: ${PRODUCT_API_TIMEOUT_MS:-90000}
+    ports:
+      - "127.0.0.1:${PRODUCT_WEB_PORT:-3000}:3000"
+    depends_on:
+      historical-delivery-api:
+        condition: service_healthy
+    mem_limit: 512m
 
   spark-smoke:
     image: apache/spark:3.5.3

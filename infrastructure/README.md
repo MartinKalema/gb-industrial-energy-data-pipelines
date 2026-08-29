@@ -8,6 +8,8 @@ The current Compose profiles are:
 
 - `query`: local Trino connected to the Cloudflare R2 Data Catalog;
 - `batch`: local Trino plus Airflow standalone for the date-range data pipeline;
+- `product`: local Trino plus the read-only historical delivery API and web
+  product;
 - `stream`: the Spark Structured Streaming feasibility service; and
 - `smoke`: the same Spark service used by the cross-engine smoke test.
 
@@ -74,3 +76,57 @@ for the exact contract, R2 object prefixes, retry behavior, and recovery steps.
 The Compose-driven milestone was verified against real R2 and the R2-backed
 Iceberg catalog on 2026-08-28. The first run inserted 313 rows into nine tables;
 the exact replay reused all 313 identities with no conflict.
+
+## Run the historical steam-delivery product
+
+The product reads the governed dimensional marts. First run the bounded Airflow
+pipeline and confirm its final dbt checkpoint,
+`test_complete_dimensional_mart_with_dbt`, succeeded. That checkpoint is the
+data-readiness gate: it certifies the complete mart before the API and web
+product are used for an investigation.
+
+With the ignored `.env` configured for R2, start the product profile:
+
+```bash
+docker compose --project-directory . -f infrastructure/compose.yaml \
+  --profile product up --build
+```
+
+The profile starts three local services:
+
+- Trino reads only committed Iceberg snapshots from R2;
+- `historical-delivery-api` runs bounded, parameterized, read-only queries over
+  `r2.industrial_energy_marts`; and
+- `historical-delivery-web` server-renders the investigation interface and
+  calls the API on the internal Compose network.
+
+Default local endpoints are:
+
+| Surface | URL |
+|---|---|
+| Historical delivery product | <http://127.0.0.1:3000> |
+| Web health | <http://127.0.0.1:3000/healthz> |
+| API OpenAPI documentation | <http://127.0.0.1:8000/docs> |
+| API process health | <http://127.0.0.1:8000/health/live> |
+| API mart readiness | <http://127.0.0.1:8000/health/ready> |
+
+Change the host ports with `PRODUCT_WEB_PORT` and `PRODUCT_API_PORT` in the
+ignored `.env` if the defaults are already in use.
+
+The local profile enables an explicit demo-identity adapter. The available
+actors are `commercial-manager`, `customer-cust-001`, and
+`customer-cust-002`. Customer actors are restricted by the API to their own
+fictional tenant, customer, site, and delivery point. The web persona selector
+is not a production login and is never the security boundary; a production
+deployment must disable demo mode and provide verified identity.
+
+Known energy and gross financial subtotals may remain visible with a
+provisional state. Official SLA, availability, penalty/credit, and net values
+remain `null` until their governed finality gates pass. The web product displays
+those `null` values as **Unavailable**, not zero. The API also preserves
+Europe/London reporting dates separately from UTC interval timestamps.
+
+See the [API guide](../apps/api/README.md),
+[web guide](../apps/web/README.md), and
+[product architecture](../docs/architecture/historical-steam-delivery-product.md)
+for endpoint, authorization, response, and recovery details.
