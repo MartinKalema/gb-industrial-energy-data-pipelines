@@ -14,4 +14,14 @@ describe("TermGuide", () => {
     expect(screen.getByText("Not applicable")).toBeInTheDocument();
     expect(screen.getByText(/Unavailable never means zero/)).toBeInTheDocument();
   });
+
+  it("explains the customer-facing delivery limit and 30-minute period terms", () => {
+    render(<TermGuide />);
+
+    expect(screen.getByText("Confirmed delivery limit")).toBeInTheDocument();
+    expect(
+      screen.getByText(/maximum steam energy the delivery point was confirmed able to supply/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/one 30-minute period/i)).toBeInTheDocument();
+  });
 });

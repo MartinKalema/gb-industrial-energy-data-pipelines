@@ -233,7 +233,7 @@ describe("delivery chart data", () => {
   it("names chart SVGs without native title tooltips", () => {
     expect(chartSource).not.toMatch(/title=\{`(?:Committed|Governed shortfall)/);
     expect(chartSource).toContain(
-      'aria-label={`Committed, delivered and final capacity for ${selectedSeries.label}`}',
+      'aria-label={`Committed, delivered and confirmed delivery limit for ${selectedSeries.label}`}',
     );
     expect(chartSource).toContain(
       'aria-label={`Governed shortfall and excess for ${selectedSeries.label}`}',
@@ -252,7 +252,10 @@ describe("DeliveryComparisonChart", () => {
     expect(screen.getByRole("combobox", { name: "Delivery point" })).toHaveTextContent(
       "North Foundry · North Foundry Works · Main steam header",
     );
-    expect(screen.getByRole("list", { name: "Exact interval chart values" })).toHaveTextContent(
+    expect(screen.getByRole("list", { name: "Chart legend" })).toHaveTextContent(
+      "Confirmed delivery limit",
+    );
+    expect(screen.getByRole("list", { name: "Exact 30-minute period values" })).toHaveTextContent(
       "Committed 10.0 MWhₜₕ. Delivered 8.0 MWhₜₕ",
     );
 
@@ -264,7 +267,7 @@ describe("DeliveryComparisonChart", () => {
 
     await user.click(screen.getByRole("button", { name: "Evidence" }));
     expect(
-      screen.getByRole("region", { name: /evidence status by interval/i }),
+      screen.getByRole("region", { name: /evidence status by 30-minute period/i }),
     ).toBeVisible();
     expect(screen.getByRole("img", { name: /Commitment.*Missing/i })).toBeVisible();
 
@@ -283,7 +286,7 @@ describe("DeliveryComparisonChart", () => {
     render(<DeliveryComparisonChart intervals={visibleIntervals} total={250} />);
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      /first 3 of 250 matching intervals/i,
+      /first 3 of 250 matching 30-minute periods/i,
     );
   });
 
@@ -306,7 +309,7 @@ describe("DeliveryComparisonChart", () => {
     expect(screen.getByRole("img", { name: /Delivery.*Unit Mismatch/i })).toHaveClass(
       "evidence-cell--invalid",
     );
-    expect(screen.getByRole("img", { name: /Capacity.*Waiting for data/i })).toHaveClass(
+    expect(screen.getByRole("img", { name: /Delivery limit.*Waiting for data/i })).toHaveClass(
       "evidence-cell--waiting",
     );
     const waitingSignal = screen.getByText("Waiting for evidence").closest("div");

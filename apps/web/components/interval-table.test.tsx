@@ -84,7 +84,11 @@ describe("IntervalTable", () => {
         dataVersion={dataVersion}
       />,
     );
-    expect(screen.getByRole("heading", { name: /no delivery intervals match/i })).toBeVisible();
+    expect(
+      screen.getByRole("heading", {
+        name: /no 30-minute delivery records match these filters/i,
+      }),
+    ).toBeVisible();
     expect(screen.getByText(/no zero values have been substituted/i)).toBeVisible();
   });
 });

@@ -1,11 +1,15 @@
 const TERMS = [
   {
     term: "Committed",
-    meaning: "The amount of steam energy agreed for a delivery point during one 30-minute interval.",
+    meaning: "The amount of steam energy agreed for a delivery point during one 30-minute period.",
   },
   {
     term: "Delivered",
-    meaning: "The steam energy accepted from the official revenue-meter evidence for that interval.",
+    meaning: "The steam energy accepted from the official revenue meter for that 30-minute period.",
+  },
+  {
+    term: "Confirmed delivery limit",
+    meaning: "The maximum steam energy the delivery point was confirmed able to supply during that 30-minute period. It is not the amount actually delivered.",
   },
   {
     term: "Accepted",
@@ -33,7 +37,7 @@ const TERMS = [
   },
   {
     term: "Not applicable",
-    meaning: "The rule deliberately does not apply, for example when an approved interval has no commitment. It is not missing data.",
+    meaning: "The rule does not apply, for example when an approved 30-minute period has no commitment. It is not missing data.",
   },
   {
     term: "Shortfall / excess",
@@ -47,7 +51,7 @@ export function TermGuide() {
       <summary>
         <span>
           <strong>What do these terms mean?</strong>
-          <small>Committed, final, unavailable, corrected and other result labels</small>
+          <small>Committed, delivered, delivery limits, unavailable and other result labels</small>
         </span>
         <span className="term-guide__action" aria-hidden="true">View definitions</span>
       </summary>

@@ -33,8 +33,8 @@ interface DetailPageProps {
 export async function generateMetadata({ params }: DetailPageProps): Promise<Metadata> {
   const { deliveryIntervalKey } = await params;
   return {
-    title: `Interval ${deliveryIntervalKey}`,
-    description: `Governed revision history for steam-delivery interval ${deliveryIntervalKey}.`,
+    title: `30-minute delivery period ${deliveryIntervalKey}`,
+    description: `Governed revision history for the 30-minute steam-delivery period ${deliveryIntervalKey}.`,
     openGraph: { images: [] },
     twitter: { images: [] },
   };
@@ -88,7 +88,7 @@ function RevisionCard({
           <MetricCard
             eyebrow="Committed"
             value={formatEnergy(revision.committed_mwh_th)}
-            note="Governed interval commitment"
+            note="Governed commitment for this 30-minute period"
             state={revision.commitment_status ?? "Recorded"}
           />
           <MetricCard
@@ -183,7 +183,7 @@ export default async function DeliveryIntervalHistoryPage({
             dataVersion,
           )}`}
         >
-          <span aria-hidden="true">←</span> Back to interval register
+          <span aria-hidden="true">←</span> Back to delivery records
         </Link>
       </header>
 
@@ -191,7 +191,7 @@ export default async function DeliveryIntervalHistoryPage({
         <section className="detail-hero" aria-labelledby="detail-title">
           <div>
             <p className="hero__index">EVIDENCE / REVISION HISTORY</p>
-            <p className="section-kicker">Delivery interval</p>
+            <p className="section-kicker">30-minute delivery period</p>
             <h1 id="detail-title">
               {current.site_name} · period {current.local_period_number}
             </h1>
@@ -202,7 +202,7 @@ export default async function DeliveryIntervalHistoryPage({
           </div>
           <div className="detail-hero__identity">
             <dl>
-              <div><dt>Interval key</dt><dd><code>{history.interval_key}</code></dd></div>
+              <div><dt>Period record ID</dt><dd><code>{history.interval_key}</code></dd></div>
               <div><dt>Delivery point</dt><dd>{current.delivery_point_name}</dd></div>
               <div><dt>Operating date</dt><dd>{current.reporting_date}</dd></div>
               <div><dt>Current record</dt><dd><StateBadge status={current.correction_status} /></dd></div>

@@ -964,12 +964,14 @@ code {
 .analysis-legend li {
   display: flex;
   align-items: center;
+  min-height: 20px;
   gap: 0.35rem;
 }
 
 .analysis-legend__mark {
-  width: 16px;
-  height: 3px;
+  width: 24px;
+  height: 4px;
+  flex: 0 0 auto;
   display: block;
   background: var(--ink);
 }
@@ -977,49 +979,49 @@ code {
 .analysis-legend__mark--commitment {
   height: 0;
   background: transparent;
-  border-top: 2px dashed #606c65;
+  border-top: 3px dashed #606c65;
 }
 
 .analysis-legend__mark--delivery { background: var(--ink); }
 .analysis-legend__mark--capacity {
   height: 0;
   background: transparent;
-  border-top: 2px dotted var(--teal);
+  border-top: 3px dotted var(--teal);
 }
-.analysis-legend__mark--shortfall { height: 9px; background: var(--red); }
-.analysis-legend__mark--excess { height: 9px; background: #567111; }
+.analysis-legend__mark--shortfall { height: 12px; background: var(--red); }
+.analysis-legend__mark--excess { height: 12px; background: #567111; }
 .analysis-legend__mark--zero {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   background: var(--paper);
   border: 2px solid var(--ink);
   border-radius: 50%;
 }
 .analysis-legend__mark--unavailable {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   transform: rotate(45deg);
   background: #f5e7c9;
   border: 2px solid #7a5212;
 }
-.analysis-legend__mark--final { height: 9px; background: var(--teal); }
+.analysis-legend__mark--final { height: 12px; background: var(--teal); }
 .analysis-legend__mark--not-applicable {
-  height: 9px;
+  height: 12px;
   background: transparent;
   border: 1px solid #7f8a84;
 }
 .analysis-legend__mark--waiting {
-  height: 9px;
+  height: 12px;
   background: #f5e7c9;
   border: 2px solid #7a5212;
 }
 .analysis-legend__mark--missing {
-  height: 9px;
+  height: 12px;
   background: repeating-linear-gradient(-45deg, #7b817d 0 2px, var(--paper) 2px 4px);
   border: 1px dashed #606c65;
 }
 .analysis-legend__mark--invalid {
-  height: 9px;
+  height: 12px;
   background: var(--red);
   border: 2px solid var(--night);
 }
