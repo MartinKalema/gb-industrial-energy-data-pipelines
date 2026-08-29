@@ -35,7 +35,16 @@ describe("responsive containment rules", () => {
       /\.dashboard-select__trigger\s*\{[^}]*min-height:\s*46px;[^}]*display:\s*flex;/s,
     );
     expect(css).toMatch(
+      /\.filter-form \.dashboard-select__trigger\s*\{[^}]*display:\s*flex;/s,
+    );
+    expect(css).toMatch(
       /\.dashboard-select__content\s*\{[^}]*max-width:\s*min\(480px, calc\(100vw - 24px\)\);/s,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*1520px\)[\s\S]*?\.filter-form\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/,
+    );
+    expect(css).toMatch(
+      /@media \(max-width:\s*900px\)[\s\S]*?\.filter-actions\s*\{[^}]*grid-column:\s*1 \/ -1;/,
     );
   });
 

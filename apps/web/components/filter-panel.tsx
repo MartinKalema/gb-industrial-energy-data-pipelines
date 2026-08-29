@@ -91,18 +91,13 @@ export function FilterPanel({
     router.push(`/?${nextScope.toString()}`);
   }
 
-  return (
-    <aside className="filter-panel" aria-labelledby="scope-heading">
-      <div className="filter-panel__heading">
-        <div>
-          <h2 id="scope-heading">Filters</h2>
-        </div>
-        <span className="filter-count" aria-label={`${activeFilterCount} optional filters active`}>
-          {activeFilterCount} active
-        </span>
-      </div>
+  const clearFilterLabel = `Clear ${activeFilterCount} ${
+    activeFilterCount === 1 ? "filter" : "filters"
+  }`;
 
-      <form action="/" method="get" className="filter-form">
+  return (
+    <aside className="filter-panel" aria-label="Analysis filters">
+      <form action="/" method="get" className="filter-form" aria-label="Filter delivery analysis">
         {dataVersion ? <input type="hidden" name="data_version" value={dataVersion} /> : null}
         <div className="filter-field">
           <label className="field-label" htmlFor="actor">
@@ -241,12 +236,21 @@ export function FilterPanel({
         <input type="hidden" name="page" value="1" />
         <input type="hidden" name="limit" value={String(filters.limit)} />
         <div className="filter-actions">
-          <button className="primary-button" type="submit">
-            Update analysis
-          </button>
-          <a className="clear-filter-link" href={`/?${clearQuery.toString()}`}>
-            Clear optional filters
-          </a>
+          <span className="field-label">Actions</span>
+          <div className="filter-actions__controls">
+            <button className="primary-button" type="submit">
+              Apply filters
+            </button>
+            {activeFilterCount > 0 ? (
+              <a
+                className="clear-filter-link"
+                href={`/?${clearQuery.toString()}`}
+                aria-label={`${clearFilterLabel} and keep the selected dates`}
+              >
+                {clearFilterLabel}
+              </a>
+            ) : null}
+          </div>
         </div>
       </form>
     </aside>
