@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -21,6 +21,10 @@ class RepositoryUnavailable(Exception):
 
 class MartIntegrityError(Exception):
     """The mart violates an assumption required by the API contract."""
+
+
+class DataVersionUnavailable(Exception):
+    """The requested immutable product publication is not ready or retained."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +54,13 @@ class ContextRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextResult:
+    rows: list[ContextRow]
+    data_version: str | None
+    data_published_at_utc: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class SummaryAggregate:
     interval_count: int
     expected_interval_count: int
@@ -76,16 +87,31 @@ class SummaryAggregate:
 class DeliveryPerformanceRepository(Protocol):
     def is_ready(self) -> bool: ...
 
-    def get_context(self, actor: Actor) -> list[ContextRow]: ...
+    def get_context(
+        self, actor: Actor, *, data_version: str | None = None
+    ) -> ContextResult: ...
 
-    def get_summary(self, actor: Actor, scope: QueryScope) -> SummaryAggregate: ...
+    def get_summary(
+        self, actor: Actor, scope: QueryScope, *, data_version: str | None = None
+    ) -> SummaryAggregate: ...
 
     def get_intervals(
-        self, actor: Actor, scope: QueryScope, *, page: int, limit: int
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        page: int,
+        limit: int,
+        data_version: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]: ...
 
     def get_interval_history(
-        self, actor: Actor, interval_key: str, *, as_of: datetime | None = None
+        self,
+        actor: Actor,
+        interval_key: str,
+        *,
+        as_of: datetime | None = None,
+        data_version: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -242,10 +268,8 @@ class TrinoDeliveryPerformanceRepository:
                     # Cancellation failures must never mask the query failure.
                     cancel = getattr(cursor, "cancel", None)
                     if cancel is not None:
-                        try:
+                        with suppress(Exception):
                             cancel()
-                        except Exception:
-                            pass
                     raise
         except (MartIntegrityError, RepositoryUnavailable):
             raise
@@ -270,7 +294,10 @@ class TrinoDeliveryPerformanceRepository:
             )
         return True
 
-    def get_context(self, actor: Actor) -> list[ContextRow]:
+    def get_context(
+        self, actor: Actor, *, data_version: str | None = None
+    ) -> ContextResult:
+        del data_version
         current_fact = self._relations["current_fact"]
         customer_relation = self._relations["customer"]
         site_relation = self._relations["site"]
@@ -300,9 +327,23 @@ class TrinoDeliveryPerformanceRepository:
             GROUP BY 1, 3, 5
             ORDER BY 1, 3, 5
         """
-        return [ContextRow(**row) for row in self._fetch_all(sql, parameters)]
+        return ContextResult(
+            rows=[ContextRow(**row) for row in self._fetch_all(sql, parameters)],
+            data_version=None,
+            data_published_at_utc=None,
+        )
 
-    def get_summary(self, actor: Actor, scope: QueryScope) -> SummaryAggregate:
+    def get_summary(
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        data_version: str | None = None,
+    ) -> SummaryAggregate:
+        if data_version is not None:
+            raise DataVersionUnavailable(
+                "The Trino reference repository does not expose publications"
+            )
         current_fact = self._relations["current_fact"]
         customer_relation = self._relations["customer"]
         predicates, parameters = _scope_predicates(
@@ -374,8 +415,18 @@ class TrinoDeliveryPerformanceRepository:
         )
 
     def get_intervals(
-        self, actor: Actor, scope: QueryScope, *, page: int, limit: int
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        page: int,
+        limit: int,
+        data_version: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
+        if data_version is not None:
+            raise DataVersionUnavailable(
+                "The Trino reference repository does not expose publications"
+            )
         current_fact = self._relations["current_fact"]
         customer_relation = self._relations["customer"]
         site_relation = self._relations["site"]
@@ -450,8 +501,17 @@ class TrinoDeliveryPerformanceRepository:
         return [], _integer(count_row["total"])
 
     def get_interval_history(
-        self, actor: Actor, interval_key: str, *, as_of: datetime | None = None
+        self,
+        actor: Actor,
+        interval_key: str,
+        *,
+        as_of: datetime | None = None,
+        data_version: str | None = None,
     ) -> list[dict[str, Any]]:
+        if data_version is not None:
+            raise DataVersionUnavailable(
+                "The Trino reference repository does not expose publications"
+            )
         history_fact = self._relations["history_fact"]
         customer_audit = self._relations["customer_audit"]
         site_audit = self._relations["site_audit"]

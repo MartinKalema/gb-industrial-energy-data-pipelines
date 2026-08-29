@@ -6,21 +6,30 @@ fictional portfolio and lets each fictional customer see only its own customer,
 sites, and delivery points.
 
 The API does not accept SQL and does not read raw, quarantine, or validated
-source data. Parameterized Trino queries read only the current and historical
-facts and their dimensions in `r2.industrial_energy_marts`.
+source data. In the product profile, parameterized ClickHouse queries read only
+the last successfully published current and historical serving tables. Those
+tables are a rebuildable copy of the tested mart; R2 and Iceberg remain
+canonical.
 
 ## Run locally
 
-The lakehouse services and dimensional mart must already be available.
+ClickHouse must be running and Airflow must have completed
+`publish_tested_dimensional_mart_to_clickhouse` at least once. The normal local
+path is the root Compose `product` profile. To run only the API process outside
+Compose, first export the ignored `.env` values, then map the read-only password
+to the API setting:
 
 ```bash
 uv sync --frozen
 PRODUCT_DEMO_MODE=true \
-TRINO_HOST=127.0.0.1 \
+PRODUCT_REPOSITORY_BACKEND=clickhouse \
+CLICKHOUSE_HOST=127.0.0.1 \
+CLICKHOUSE_USER=historical_delivery_api \
+CLICKHOUSE_PASSWORD="$CLICKHOUSE_API_PASSWORD" \
 uv run uvicorn apps.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-Check the process and its Trino dependency separately:
+Check the process and its ready-publication dependency separately:
 
 ```bash
 curl --fail http://127.0.0.1:8000/health/live
@@ -43,7 +52,7 @@ authorization testing and send one exact `X-Demo-Actor` value:
 This selector is not production authentication. Missing and unknown actors fail
 closed. Explicit collection filters outside a customer actor's claims return a
 generic `403`; inaccessible interval keys return the same `404` as unknown keys.
-Every Trino fact query independently joins its customer dimension and applies
+Every ClickHouse query independently requires a ready publication and applies
 the immutable tenant scope before caller-supplied filters.
 
 A production deployment must keep demo mode off and replace this adapter with a
@@ -75,8 +84,8 @@ All `/api/v1` endpoints require `X-Demo-Actor` in the local profile.
 | Endpoint | Contract |
 |---|---|
 | `GET /health/live` | The API process can answer HTTP. |
-| `GET /health/ready` | The current fact and customer authorization dimension are queryable through Trino. An empty mart is ready. |
-| `GET /api/v1/context` | Actor, authorized customer/site/delivery-point options, and available reporting dates. |
+| `GET /health/ready` | The latest ready publication exists and its marked current/history row counts match the marker. |
+| `GET /api/v1/context` | Actor, authorized customer/site/delivery-point options, available reporting dates, `data_version`, and `data_published_at_utc`. |
 | `GET /api/v1/delivery-performance/summary` | Governed counts, known subtotals, completeness gates, official percentages, financial state, and freshness. |
 | `GET /api/v1/delivery-performance/intervals` | Stable, bounded page of current half-hour results and all relevant data/result states. |
 | `GET /api/v1/delivery-performance/intervals/{interval_key}/history` | Up to 200 authorized source-knowledge windows using revision-audit descriptions. `truncated=true` explicitly reports that older revisions were omitted. Optional `as_of` is an offset-aware timestamp. |
@@ -88,6 +97,15 @@ Summary and interval-list parameters are:
 - optional investigation status: `final`, `provisional`, `missing`, `corrected`,
   `shortfall`, or `excess`; and
 - `page` and `limit` on the interval list.
+
+The context, summary, interval-list, and interval-history endpoints accept the
+optional `X-Product-Data-Version` header. The web reads `data_version` from the
+first context response, carries it through pagination and detail links, and
+sends it on every following request so one investigation uses one immutable
+ready publication. Without the header, the API uses the newest ready
+publication. A missing version returns a bounded
+`data_version_unavailable` error; malformed version text returns
+`invalid_data_version`.
 
 Example:
 
@@ -120,20 +138,23 @@ exclude measurements, contract values, credentials, and raw evidence.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PRODUCT_DEMO_MODE` | `false` | Enables the explicit local demo-identity adapter. |
-| `TRINO_HOST` | `trino` | Trino host. Use `127.0.0.1` outside Compose. |
-| `TRINO_PORT` | `8080` | Trino port. |
-| `TRINO_HTTP_SCHEME` | `http` | `http` or `https`. |
-| `PRODUCT_TRINO_USER` | `historical-delivery-api` | Read-only Trino product identity. |
-| `PRODUCT_TRINO_TIMEOUT_SECONDS` | `20` | Per-exchange Trino HTTP timeout. |
-| `PRODUCT_TRINO_QUERY_TIMEOUT_SECONDS` | `60` | Server-enforced total queued/execution limit for each Trino query. |
-| `PRODUCT_TRINO_CATALOG` | `r2` | Validated lower-case Trino catalog identifier. |
-| `PRODUCT_TRINO_SCHEMA` | `industrial_energy_marts` | Validated lower-case governed mart schema. |
+| `PRODUCT_REPOSITORY_BACKEND` | `trino` | Repository implementation. The Compose product profile sets `clickhouse`; `trino` remains for parity and reference. |
+| `CLICKHOUSE_HOST` | `clickhouse` | Serving database host. Use `127.0.0.1` outside Compose. |
+| `CLICKHOUSE_HTTP_PORT` | `8123` | ClickHouse HTTP port. |
+| `CLICKHOUSE_USER` | `historical_delivery_api` | Dedicated read-only product account. |
+| `CLICKHOUSE_PASSWORD` | none | Required when the backend is `clickhouse`; Compose maps it from `CLICKHOUSE_API_PASSWORD`. |
+| `CLICKHOUSE_SECURE` | `false` | Use TLS for the ClickHouse HTTP connection. |
+| `PRODUCT_CLICKHOUSE_DATABASE` | `industrial_energy_serving` | Validated lower-case serving database identifier. |
+| `PRODUCT_CLICKHOUSE_TIMEOUT_SECONDS` | `20` | ClickHouse connection/transport timeout. |
+| `PRODUCT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS` | `60` | Server-enforced query execution limit. |
 | `PRODUCT_MAX_QUERY_DAYS` | `31` | Maximum inclusive reporting-date range. |
 | `PRODUCT_MAX_PAGE_SIZE` | `200` | Configurable page cap, never above 200. |
 
-Catalog and schema are configurable for isolated tests, but relation names are
-fixed in code. Identifier validation prevents configuration from introducing
-arbitrary SQL.
+The database is configurable for isolated tests, but relation names are fixed
+in code. Identifier validation prevents configuration from introducing
+arbitrary SQL. The retained Trino backend still uses `TRINO_*` and
+`PRODUCT_TRINO_*` settings for parity checks; it is not the frontend-serving
+path in Compose.
 
 ## Verify
 
@@ -142,8 +163,13 @@ uv run pytest -q tests/api
 docker build -f apps/api/Dockerfile -t historical-delivery-api .
 ```
 
-The focused suite verifies identity failures, cross-tenant denial, tenant SQL
-predicates, parameter binding, revision-audit history authorization, reporting
-date bounds, pagination bounds, empty-mart readiness, bounded/cancelled queries,
-history truncation, privacy-safe failure logging, exact aggregate gates, exact
-decimal strings, and the difference between a missing value and a real zero.
+The focused suite verifies identity failures, cross-tenant denial, tenant and
+ready-publication predicates, parameter binding, version pinning,
+revision-history authorization, reporting-date bounds, pagination bounds,
+readiness, bounded queries, history truncation, privacy-safe failure logging,
+exact aggregate gates, exact decimal strings, and the difference between a
+missing value and a real zero.
+
+See the
+[ClickHouse frontend serving architecture](../../docs/architecture/clickhouse-frontend-serving-layer.md)
+for publication, retry, failure-isolation, and credential details.

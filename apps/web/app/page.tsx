@@ -4,6 +4,8 @@ import { IntervalTable } from "@/components/interval-table";
 import { MetricCard } from "@/components/metric-card";
 import { OutcomeRibbon } from "@/components/outcome-ribbon";
 import { Pagination } from "@/components/pagination";
+import { notFound } from "next/navigation";
+import { parseProductDataVersion } from "@/lib/data-version";
 import type { SearchParams } from "@/lib/filters";
 import { parseDashboardFilters } from "@/lib/filters";
 import {
@@ -31,15 +33,26 @@ interface PageProps {
 export default async function DeliveryPerformancePage({ searchParams }: PageProps) {
   const params = await searchParams;
   const initialFilters = parseDashboardFilters(params);
-  const contextResult = await getProductContext(initialFilters.actor);
+  const requestedDataVersion = parseProductDataVersion(params.data_version);
+  if (
+    params.data_version !== undefined &&
+    requestedDataVersion === undefined
+  ) {
+    notFound();
+  }
+  const contextResult = await getProductContext(initialFilters.actor, {
+    dataVersion: requestedDataVersion,
+  });
   const filters = parseDashboardFilters(
     params,
     new Date(),
     contextResult.data.available_reporting_dates ?? undefined,
   );
+  const dataVersion =
+    requestedDataVersion ?? contextResult.data.data_version ?? undefined;
   const [summaryResult, intervalsResult] = await Promise.all([
-    getDeliverySummary(filters),
-    getDeliveryIntervals(filters),
+    getDeliverySummary(filters, { dataVersion }),
+    getDeliveryIntervals(filters, { dataVersion }),
   ]);
   const summary = summaryResult.data;
   const intervals = intervalsResult.data;
@@ -205,7 +218,11 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
             {intervals.items.length > 0 ? (
               <>
                 <DeliveryComparisonChart intervals={intervals.items} />
-                <OutcomeRibbon intervals={intervals.items} filters={filters} />
+                <OutcomeRibbon
+                  intervals={intervals.items}
+                  filters={filters}
+                  dataVersion={dataVersion}
+                />
               </>
             ) : null}
             <IntervalTable
@@ -213,8 +230,13 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
               filters={filters}
               currency={summary.currency_code}
               financialColumnLabel={labels.shortNet}
+              dataVersion={dataVersion}
             />
-            <Pagination filters={filters} total={intervals.total} />
+            <Pagination
+              filters={filters}
+              total={intervals.total}
+              dataVersion={dataVersion}
+            />
 
             <section className="provenance" aria-labelledby="provenance-heading">
               <div>
@@ -224,7 +246,15 @@ export default async function DeliveryPerformancePage({ searchParams }: PageProp
               <dl>
                 <div>
                   <dt>Governed source</dt>
-                  <dd>Iceberg dimensional mart, served read-only through the product API</dd>
+                  <dd>Tested Iceberg dimensional mart</dd>
+                </div>
+                <div>
+                  <dt>Published to the frontend database</dt>
+                  <dd>{formatDateTime(contextResult.data.data_published_at_utc)} UTC</dd>
+                </div>
+                <div>
+                  <dt>Frontend data version</dt>
+                  <dd><code>{contextResult.data.data_version ?? "Direct mart query"}</code></dd>
                 </div>
                 <div>
                   <dt>Latest coverage publication</dt>

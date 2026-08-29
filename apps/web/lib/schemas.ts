@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PRODUCT_DATA_VERSION_PATTERN } from "@/lib/data-version";
 
 const decimal = z
   .string()
@@ -41,6 +42,8 @@ export const productContextSchema = z
         role: z.enum(["commercial_manager", "customer"]),
       })
       .strict(),
+    data_version: z.string().regex(PRODUCT_DATA_VERSION_PATTERN).nullable(),
+    data_published_at_utc: utcTimestamp.nullable(),
     customers: z.array(customerSchema),
     available_reporting_dates: z
       .object({

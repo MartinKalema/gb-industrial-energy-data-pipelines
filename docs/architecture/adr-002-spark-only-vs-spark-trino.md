@@ -55,7 +55,7 @@ Costs:
 ```text
 Redpanda -> Spark Structured Streaming -> committed Iceberg snapshots
 
-dbt / analyst / API -> Trino -----------> committed Iceberg snapshots
+dbt / analyst -> Trino -----------------> committed Iceberg snapshots
 ```
 
 | Dimension | Assessment |
@@ -72,7 +72,7 @@ Benefits:
 
 - the long-running stateful stream and short-lived analyst/dbt queries have
   different owners and failure lifecycles;
-- Trino supplies a direct ANSI-SQL-oriented endpoint for dbt, BI tools, APIs, and
+- Trino supplies a direct ANSI-SQL-oriented endpoint for dbt, BI tools, and
   ad-hoc exploration;
 - Spark can restart from its checkpoint without coordinating query workloads;
 - reading Spark commits through Trino proves the value of Iceberg's open-engine
@@ -91,7 +91,8 @@ Keep Option B for this project, with a strict boundary:
 
 - Spark is the only live stream processor.
 - Trino never consumes Redpanda and is not required to run the streaming profile.
-- Trino is started only for finite dbt, analyst, API, or dashboard work.
+- Trino is started only for finite dbt, analyst, or tested serving-publication
+  work.
 - Spark may handle an unusually heavy batch job, but ordinary dimensional SQL is
   submitted by dbt to Trino.
 
@@ -101,6 +102,14 @@ is more important than interactive SQL and multi-engine interoperability, choose
 Option A; it remains architecturally sound.
 
 ADR-001 remains valid because Spark alone owns streaming.
+
+## 2026-08-29 implementation note
+
+Measured product latency later justified a rebuildable ClickHouse serving copy.
+Airflow publishes only the fully tested Trino/dbt mart, and the historical API
+reads ClickHouse. Option B still governs the compute boundary: Spark alone owns
+streaming, while Trino owns finite governed SQL. ClickHouse is a downstream
+serving database, not a stream processor or a replacement for Iceberg.
 
 ## References
 

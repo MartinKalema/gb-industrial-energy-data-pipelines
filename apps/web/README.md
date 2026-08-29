@@ -2,8 +2,8 @@
 
 This server-rendered Next.js product lets commercial teams and authorized
 customers investigate historical, 30-minute steam-delivery results. It reads
-governed metrics from the product API; it does not query Trino directly or
-recalculate contractual metrics in the browser.
+governed metrics from the product API; it does not query ClickHouse, Trino, or
+R2 directly and does not recalculate contractual metrics in the browser.
 
 The interface deliberately distinguishes:
 
@@ -15,7 +15,8 @@ The interface deliberately distinguishes:
 
 ## Run locally
 
-Prerequisites: Node.js 24.15 or newer and the product API running locally.
+Prerequisites: Node.js 24.15 or newer, one successful ClickHouse publication,
+and the product API running locally.
 
 ```bash
 cd apps/web
@@ -30,8 +31,9 @@ Open <http://127.0.0.1:3000>. The readiness endpoint is
 `PRODUCT_API_URL` is a server-only setting. Do not rename it to a
 `NEXT_PUBLIC_*` variable: the browser must not call the product API or construct
 the demo identity header. `PRODUCT_API_TIMEOUT_MS` sets the server-side request
-deadline and defaults to 90 seconds. The local Trino instance sometimes needs
-more than 30 seconds to compile and execute the dimensional queries.
+deadline and defaults to 90 seconds. ClickHouse normally answers this local
+product much faster, but the bounded deadline still protects a request when a
+dependency stalls.
 
 ## Demo authorization
 
@@ -54,7 +56,7 @@ All requests are `GET` requests under `/api/v1`:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `/context` | Authorized identity, customers, sites, delivery points, and available reporting dates |
+| `/context` | Authorized identity, customers, sites, delivery points, available reporting dates, and the ready publication version/time |
 | `/delivery-performance/summary` | Governed aggregate values and their final/provisional states |
 | `/delivery-performance/intervals` | Paginated 30-minute delivery evidence |
 | `/delivery-performance/intervals/{interval_key}/history` | As-known revision history for one fact key; an explicit notice appears if the API omits revisions beyond its 200-record bound |
@@ -64,6 +66,13 @@ Analytical requests use inclusive `start_date` and `end_date` values in the
 UTC-midnight range. Optional parameters are `customer_id`, `site_id`, `status`,
 `page`, and `limit`. Supported status filters are `final`, `provisional`,
 `missing`, `corrected`, `shortfall`, and `excess`.
+
+The page first calls `/context`, then carries its `data_version` through
+pagination and detail links. Context, summary, interval, and history requests
+send that value as `X-Product-Data-Version`. That pins one investigation to one
+immutable ready publication even if Airflow publishes a newer version between
+clicks. The interface also shows the version and publication time as data
+freshness evidence.
 
 The API returns decimal measures as JSON strings or `null`, an `X-Request-ID`
 header for tracing, and an error body shaped as:

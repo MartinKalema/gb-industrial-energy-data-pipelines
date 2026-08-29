@@ -47,6 +47,8 @@ export interface ProductContext {
     actor_id: string;
     role: string;
   };
+  data_version: string | null;
+  data_published_at_utc: string | null;
   customers: CustomerOption[];
   available_reporting_dates: {
     start: string;

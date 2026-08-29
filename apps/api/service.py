@@ -24,8 +24,8 @@ from apps.api.models import (
     SiteOption,
 )
 from apps.api.repository import (
-    DeliveryPerformanceRepository,
     HISTORY_RESPONSE_LIMIT,
+    DeliveryPerformanceRepository,
     MartIntegrityError,
     QueryScope,
     SummaryAggregate,
@@ -58,8 +58,11 @@ class DeliveryPerformanceService:
     def __init__(self, repository: DeliveryPerformanceRepository) -> None:
         self._repository = repository
 
-    def context(self, actor: Actor) -> ProductContextResponse:
-        rows = self._repository.get_context(actor)
+    def context(
+        self, actor: Actor, *, data_version: str | None = None
+    ) -> ProductContextResponse:
+        result = self._repository.get_context(actor, data_version=data_version)
+        rows = result.rows
         customers: OrderedDict[str, dict[str, Any]] = OrderedDict()
         for row in rows:
             customer = customers.setdefault(
@@ -104,12 +107,20 @@ class DeliveryPerformanceService:
             identity=ActorResponse(actor_id=actor.actor_id, role=actor.role),
             customers=customer_models,
             available_reporting_dates=available_dates,
+            data_version=result.data_version,
+            data_published_at_utc=result.data_published_at_utc,
         )
 
     def summary(
-        self, actor: Actor, scope: QueryScope
+        self,
+        actor: Actor,
+        scope: QueryScope,
+        *,
+        data_version: str | None = None,
     ) -> DeliveryPerformanceSummaryResponse:
-        aggregate = self._repository.get_summary(actor, scope)
+        aggregate = self._repository.get_summary(
+            actor, scope, data_version=data_version
+        )
         return build_summary_response(actor, scope, aggregate)
 
     def intervals(
@@ -119,9 +130,14 @@ class DeliveryPerformanceService:
         *,
         page: int,
         limit: int,
+        data_version: str | None = None,
     ) -> DeliveryIntervalsPageResponse:
         rows, total = self._repository.get_intervals(
-            actor, scope, page=page, limit=limit
+            actor,
+            scope,
+            page=page,
+            limit=limit,
+            data_version=data_version,
         )
         return DeliveryIntervalsPageResponse(
             items=[DeliveryIntervalResponse(**row) for row in rows],
@@ -131,9 +147,19 @@ class DeliveryPerformanceService:
         )
 
     def interval_history(
-        self, actor: Actor, interval_key: str, *, as_of: datetime | None = None
+        self,
+        actor: Actor,
+        interval_key: str,
+        *,
+        as_of: datetime | None = None,
+        data_version: str | None = None,
     ) -> DeliveryIntervalHistoryResponse | None:
-        rows = self._repository.get_interval_history(actor, interval_key, as_of=as_of)
+        rows = self._repository.get_interval_history(
+            actor,
+            interval_key,
+            as_of=as_of,
+            data_version=data_version,
+        )
         if not rows:
             return None
         return DeliveryIntervalHistoryResponse(

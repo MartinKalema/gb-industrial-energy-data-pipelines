@@ -28,6 +28,10 @@ that mart. A FastAPI boundary enforces demo customer scope and a server-rendered
 Next.js interface lets commercial and customer personas investigate known,
 provisional, final, missing, and corrected interval results. The interface
 shows missing governed values as unavailable; it never changes them to zero.
+The tested mart is published to native ClickHouse tables before the product
+uses it. R2 and Iceberg remain the canonical data; ClickHouse is a rebuildable
+serving copy that removes lakehouse-query startup time from an interactive page
+request.
 
 ## Why this project
 
@@ -62,6 +66,7 @@ Airflow -> deterministic source generator -> original files in R2
         -> row checks -> accepted files / failed rows saved separately in R2
         -> local Trino -> typed Iceberg source tables on R2
         -> dbt -> current and source-knowledge dimensional marts on R2
+        -> final dbt tests -> versioned native ClickHouse serving tables
 
 STREAM
 Elexon IRIS AMQP ----> local bridge ----\
@@ -73,14 +78,15 @@ Live plant simulator -------------------/          |
 
 QUERY (after Spark commits an Iceberg snapshot)
 Analyst / dbt -> Trino -> Iceberg on R2
-Historical web -> read-only product API -> Trino -> governed Iceberg marts on R2
+Historical web -> tenant-scoped product API -> ClickHouse ready publication
 ```
 
 All compute services run locally. Cloudflare R2 is the only object-storage
 runtime, and its managed Iceberg REST catalog remains the remote metadata
 service. There is no MinIO or local object-store runtime. Local volumes hold
-only Airflow state/work files, Spark checkpoints, and downloaded dependencies.
-The public source APIs also remain remote.
+only Airflow state/work files, the rebuildable ClickHouse serving copy, Spark
+checkpoints, and downloaded dependencies. The public source APIs also remain
+remote.
 
 ## Repository map
 
@@ -109,8 +115,11 @@ The implemented product answers a focused historical investigation:
 
 The final dbt checkpoint,
 `test_complete_dimensional_mart_with_dbt`, certifies the mart before it is used
-as product-ready data. After that checkpoint succeeds, start the local product
-profile:
+as product-ready data. Airflow then runs
+`publish_tested_dimensional_mart_to_clickhouse`. That task copies the tested
+current and history datasets into a new ClickHouse version, validates the copy,
+and makes it visible only after all checks pass. After one publication succeeds,
+start the local product profile:
 
 ```bash
 docker compose --project-directory . -f infrastructure/compose.yaml \
@@ -124,10 +133,12 @@ With the default ports:
 - API documentation: <http://127.0.0.1:8000/docs>
 - API dependency readiness: <http://127.0.0.1:8000/health/ready>
 
-The web server calls the API; the browser does not query Trino and does not
+The web server calls the API; the browser does not query ClickHouse and does not
 construct the demo identity header. The API accepts bounded filters and runs
-parameterized, read-only queries against the governed current and history marts.
-The API—not the interface—is the authorization boundary.
+parameterized, read-only, tenant-scoped queries against the last ready serving
+version. The API—not the interface—is the authorization boundary. Its context
+response identifies that version, and the web pins the remaining page requests
+to it with `X-Product-Data-Version` so one page cannot mix two publications.
 
 The local profile has three demonstration personas:
 `commercial-manager`, `customer-cust-001`, and `customer-cust-002`. The two
@@ -140,6 +151,7 @@ availability, penalty/credit, and net financial values remain unavailable until
 their governed completeness and finality gates pass. An API `null` is rendered
 as **Unavailable**, never as `0`. See the
 [product architecture](docs/architecture/historical-steam-delivery-product.md),
+[ClickHouse serving architecture](docs/architecture/clickhouse-frontend-serving-layer.md),
 [API guide](apps/api/README.md), and [web guide](apps/web/README.md) for the
 complete contract and local run instructions.
 
@@ -161,9 +173,10 @@ complete contract and local run instructions.
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
 | Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
-| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt orchestration, and the focused historical product are implemented; FUELHH remains |
-| Historical product API | Implemented: read-only, tenant-scoped FastAPI over governed current/history marts |
+| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt-to-ClickHouse orchestration, and the focused historical product are implemented; FUELHH remains |
+| Historical product API | Implemented: read-only, tenant-scoped FastAPI over ready ClickHouse versions sourced from governed current/history marts |
 | Historical web product | Implemented: server-rendered commercial/customer investigation and revision history |
+| Frontend serving database | Implemented: versioned native ClickHouse copy published only after the final dbt tests |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 

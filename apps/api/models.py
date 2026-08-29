@@ -59,6 +59,8 @@ class ProductContextResponse(ResponseModel):
     identity: ActorResponse
     customers: list[CustomerOption]
     available_reporting_dates: AvailableReportingDates | None
+    data_version: str | None
+    data_published_at_utc: UtcDatetime | None
 
 
 class QueryScopeResponse(ResponseModel):

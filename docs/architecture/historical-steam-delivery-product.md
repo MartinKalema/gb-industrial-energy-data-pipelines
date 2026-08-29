@@ -13,6 +13,11 @@ throwaway dashboard: the API owns authorization and metric presentation, the
 web application consumes typed responses, and both services have health,
 failure, and automated-test contracts.
 
+The product reads a versioned native ClickHouse copy for interactive speed.
+That copy is disposable and rebuildable. Cloudflare R2 and Apache Iceberg
+remain canonical, while Trino and dbt remain responsible for governed
+transformations and tests.
+
 ## Requirements and boundaries
 
 ### Functional requirements
@@ -29,14 +34,16 @@ failure, and automated-test contracts.
 
 ### Non-functional requirements
 
-- All compute remains local; Trino reads the R2-backed Iceberg marts.
+- All compute remains local. Trino reads and transforms the R2-backed Iceberg
+  marts during the finite batch workflow; ClickHouse serves product requests.
 - Product queries are read-only, parameterized, operating-date-bounded, and
   page-bounded.
 - Decimal quantities and money retain their exact string representation across
   the API boundary. UTC timestamps remain timezone-aware.
 - Missing governed measures remain `null`; neither the API nor UI converts them
   to zero.
-- Health checks distinguish a live process from readiness to query Trino.
+- Health checks distinguish a live process from readiness to query a complete,
+  marked ClickHouse publication.
 - Request logs carry a request ID, actor, authorized scope, route, outcome, and
   duration without logging contract values or credentials.
 
@@ -54,30 +61,43 @@ Next.js historical-performance product
 FastAPI product boundary
   |-- validates date/page bounds
   |-- resolves actor and allowed customer scope
-  |-- adds the scope to every query
+  |-- resolves/pins one ready data version
+  |-- adds the version and tenant scope to every query
   |-- returns governed values and result states
   v
-Trino (read-only product user/source tag)
-  v
-R2 Data Catalog -> Iceberg dimensional marts on Cloudflare R2
+ClickHouse native MergeTree serving tables (read-only API account)
+
+Separate finite publication path:
+
+Iceberg marts on R2 -> Trino/dbt tests -> Airflow publisher -> ClickHouse
 ```
 
 The web application is a presentation layer, not a security boundary. Changing
 or hiding a filter cannot expand access because FastAPI independently resolves
-the actor and constrains every Trino query.
+the actor and constrains every ClickHouse query.
 
 ## Data contract
 
-The API reads only these governed relations:
+The canonical inputs to the publication task are these governed relations:
 
 - `fct_steam_delivery_interval` for the current authoritative half-hour result;
 - `fct_steam_delivery_interval_history` for source-knowledge change windows;
 - current dimensions for display names and filter options; and
 - revision-audit dimensions when historical descriptions are needed.
 
-The API does not read raw JSON, quarantine files, validated source tables, or
-reimplement meter deltas. It uses the fact's interval-level capped numerators,
-counts, monetary values, lineage, and result-status fields.
+The task denormalizes the API-facing fields into
+`industrial_energy_serving.delivery_interval_current` and
+`industrial_energy_serving.delivery_interval_history`. It does not recalculate
+meter deltas, delivery, SLA, availability, or money. It preserves the fact's
+interval-level capped numerators, counts, monetary values, lineage, exact nulls,
+timestamps, and result-status fields.
+
+The API reads only those two serving tables and
+`industrial_energy_serving.data_publication`. It does not read raw JSON,
+quarantine files, validated source tables, or unfinished ClickHouse candidates.
+See the
+[ClickHouse frontend serving architecture](clickhouse-frontend-serving-layer.md)
+for the table and release contract.
 
 ### Aggregate safeguards
 
@@ -101,11 +121,11 @@ counts, monetary values, lineage, and result-status fields.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health/live` | Confirm that the API process is running. |
-| `GET /health/ready` | Confirm that the configured Trino mart can be queried. |
-| `GET /api/v1/context` | Return the actor, authorized customers/sites, and available date boundary. |
+| `GET /health/ready` | Confirm that the latest ready publication exists and its marked row counts are present. |
+| `GET /api/v1/context` | Return the actor, authorized customers/sites, available date boundary, data version, and publication time. |
 | `GET /api/v1/delivery-performance/summary` | Return governed totals, completeness, official percentages, result states, and freshness for a bounded scope. |
 | `GET /api/v1/delivery-performance/intervals` | Return a stable page of half-hour facts and their individual states. |
-| `GET /api/v1/delivery-performance/intervals/{delivery_interval_key}/history` | Return authoritative source-knowledge windows for one authorized interval. |
+| `GET /api/v1/delivery-performance/intervals/{interval_key}/history` | Return authoritative source-knowledge windows for one authorized interval. |
 
 Inclusive `start_date` and `end_date` inputs are GB operating dates, not
 UTC-midnight approximations. The API filters the fact's warehouse date key so a
@@ -113,8 +133,15 @@ summer operating day correctly includes its first interval at 23:00 UTC on the
 previous civil date. Customer/site identifiers, status filters, page, and limit
 are also typed inputs. The maximum query window and page size are configuration,
 with conservative local defaults. Invalid bounds return a client error;
-unavailable Trino returns a bounded service error rather than an empty business
-result.
+unavailable ClickHouse or a missing ready publication returns a bounded service
+error rather than an empty business result.
+
+The first context request resolves the newest ready publication and returns
+`data_version` plus `data_published_at_utc`. The web carries that version through
+pagination and detail links, and sends it in the `X-Product-Data-Version` header
+on context, summary, interval, and history requests. The API then uses that
+exact immutable version, so one investigation cannot mix two publications.
+Callers that omit the header use the newest ready publication.
 
 ## Local identity and authorization
 
@@ -138,43 +165,57 @@ and negative tests remain at the API boundary.
 
 ## Reliability and observability
 
-- Compose starts the product profile only after Trino is healthy and starts the
-  web service only after FastAPI is ready.
-- A mart is declared ready only after Airflow's
-  `test_complete_dimensional_mart_with_dbt` checkpoint succeeds. The current
-  full-rebuild baseline does not provide a transaction across all mart tables,
-  so the local product profile must not serve a dbt build that is still running
-  or has failed partway through; rerun the failed checkpoint to convergence
-  before serving the mart.
-- Query and connection deadlines prevent a stalled Trino request from holding a
-  product request indefinitely.
+- Compose starts the API only after ClickHouse is healthy. The API readiness
+  endpoint stays false until a complete ready publication can be verified.
+- Airflow runs `publish_tested_dimensional_mart_to_clickhouse` only after
+  `test_complete_dimensional_mart_with_dbt` succeeds.
+- Candidate current and history rows carry a new `load_attempt_id`. They remain
+  invisible until exact validation passes and the matching `data_publication`
+  ready marker is inserted as the final write.
+- A partial load, validation failure, or timeout cannot replace the last good
+  publication. An exact retry reuses the already-ready fingerprint.
+- Query and connection deadlines prevent a stalled ClickHouse request from
+  holding a product request indefinitely.
 - Stable pagination prevents an unbounded interval response.
 - Structured logs and request IDs make a UI failure traceable through FastAPI
-  to a Trino query without exposing source payloads.
+  to a ClickHouse query without exposing source payloads.
 - A readiness failure is distinct from an authorized query that correctly
   returns no rows.
+
+## Local verification
+
+The real serving publication contained 96 current rows and 558 authorized
+history rows. Repeating the same tested source fingerprint reused the ready
+version. Failure tests proved that partial and invalid candidates never become
+visible.
+
+Before the serving layer, representative local Trino/R2 calls measured about
+26 seconds for context and 6 seconds for summary; the complete server-rendered
+page measured about 14 seconds. With ClickHouse, API calls measured about 0.02
+seconds and the same page about 0.17 seconds. These measurements describe this
+local project environment and are not general engine benchmarks.
 
 ## Trade-offs
 
 | Decision | Benefit | Cost or limitation |
 |---|---|---|
-| Query Trino directly from FastAPI | One governed read path over current Iceberg results; no duplicate serving store | Product latency depends on local Trino and the remote catalog |
+| Publish native ClickHouse serving tables | Local API calls are fast and do not wait for R2 metadata, Trino planning, or object downloads | The tested mart is duplicated into a rebuildable serving copy |
+| Use immutable candidates and a final ready marker | A failed publication is invisible and the previous version remains usable | Old candidates and versions require a later retention policy |
+| Pin one page to `X-Product-Data-Version` | Concurrent publication cannot mix versions within one page | The API must retain a requested ready version while clients may still use it |
 | Server-render the first web workflow | Keeps data access on the server and makes empty/error states deterministic | Rich live interaction will need client components later |
 | Keep aggregate presentation in the typed API | Dashboard, later AI tools, and exports can share one contract | The API query contract must be regression-tested with dbt fixtures |
 | Explicit local demo identities | Makes authorization behavior visible and testable without fake production claims | It is not authentication and must never be enabled in a real deployment |
-| No cache in the first release | Every response reflects the current committed Iceberg snapshot | Repeated queries cost more and may need measured caching later |
-| Serve only a successfully tested mart build | Prevents presenting a known partial rebuild as ready | The first local release uses an operating rule rather than an atomic multi-table publication pointer |
+| No cache in the first release | The measured serving database path is visible without hiding it behind another layer | Repeated queries still reach ClickHouse |
+| Full versioned publication first | Easy to compare, retry, and rebuild | Data growth may later justify incremental publication |
 
 ## Revisit as usage grows
 
 - Add verified OIDC identities and policy-managed scopes before deployment.
-- Add a short-lived cache only after measuring repeated Trino query latency and
+- Add a short-lived cache only after measuring repeated ClickHouse query latency and
   defining correction invalidation behavior.
-- Add a separate serving store only if measured product latency cannot meet an
-  accepted objective; Iceberg remains the governed system of record.
+- Add incremental publication and old-version cleanup only when measured data
+  growth justifies their additional state and recovery logic.
 - Move widely reused aggregate queries into dedicated dbt presentation models
   if another consumer needs direct SQL rather than the typed product API.
-- Add an atomic serving-version pointer or snapshot-set manifest before dbt
-  builds and product traffic are allowed to overlap.
 - Add live operator views only after the Spark streaming slice has event-time,
   late-data, and reconciliation guarantees.

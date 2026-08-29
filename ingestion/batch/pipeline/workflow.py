@@ -10,18 +10,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
 from ingestion.batch.synthetic.generate import DATASET_FILES, write_bundle
 
-from .models import PipelineError, RunPlan, build_run_plan, parse_utc_timestamp
+from .models import (
+    PipelineError,
+    RunPlan,
+    build_run_plan,
+    parse_utc_timestamp,
+    require_environment,
+)
 from .storage import ObjectStore, R2ObjectStore, content_sha256
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CONTRACTS_DIR = REPOSITORY_ROOT / "contracts"
@@ -38,7 +44,9 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_bytes(
-        (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
+        (
+            json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode()
     )
     temporary.replace(path)
 
@@ -122,9 +130,7 @@ def generate_source_bundle(plan_value: Mapping[str, Any]) -> dict[str, Any]:
 
     plan = RunPlan.from_mapping(_require_mapping(plan_value, "plan"))
     source_dir = Path(plan.work_dir) / "generated"
-    generated_at = parse_utc_timestamp(
-        plan.generation_time_utc, "generation_time_utc"
-    )
+    generated_at = parse_utc_timestamp(plan.generation_time_utc, "generation_time_utc")
     manifest = write_bundle(
         start_date=datetime.fromisoformat(plan.start_date).date(),
         end_date=datetime.fromisoformat(plan.end_date).date(),
@@ -281,7 +287,9 @@ def land_raw_bundle(
         "raw_artifacts": raw_artifacts,
         "evidence_envelopes": envelope_artifacts,
         "raw_manifest": manifest_info,
-        "raw_record_count": sum(int(item["record_count"]) for item in manifest["datasets"]),
+        "raw_record_count": sum(
+            int(item["record_count"]) for item in manifest["datasets"]
+        ),
     }
     _write_json_atomic(Path(plan.work_dir) / "raw-landing-result.json", result)
     return result
@@ -326,8 +334,7 @@ def validate_raw_bundle(
     if report["bundle_issues"]:
         issue = report["bundle_issues"][0]
         raise PipelineError(
-            "bundle validation could not complete: "
-            f"{issue['code']}: {issue['message']}"
+            f"bundle validation could not complete: {issue['code']}: {issue['message']}"
         )
 
     accepted_artifacts: list[dict[str, Any]] = []
@@ -391,8 +398,7 @@ def validate_raw_bundle(
     report_info = storage.put_immutable(
         bucket=plan.raw_bucket,
         key=(
-            f"{plan.raw_prefix}/quality/{plan.pipeline_run_id}/"
-            "validation-report.json"
+            f"{plan.raw_prefix}/quality/{plan.pipeline_run_id}/validation-report.json"
         ),
         content=report_content,
         content_type="application/json",
@@ -469,7 +475,9 @@ def load_validated_bundle(
         artifact = accepted_by_dataset[dataset]
         accepted_path = Path(str(artifact["local_path"])).resolve()
         if accepted_path.parent != validation_output_dir / "accepted":
-            raise PipelineError(f"accepted path is outside validation output for {dataset}")
+            raise PipelineError(
+                f"accepted path is outside validation output for {dataset}"
+            )
         accepted_content = accepted_path.read_bytes()
         if content_sha256(accepted_content) != artifact["sha256"]:
             raise PipelineError(f"accepted artifact changed before load for {dataset}")
@@ -498,16 +506,12 @@ def load_validated_bundle(
                     raw_record_locator=f"line:{int(evidence['line_number'])}",
                 )
             )
-        dataset_results.append(
-            loader.load_records(dataset, accepted_records).to_dict()
-        )
+        dataset_results.append(loader.load_records(dataset, accepted_records).to_dict())
 
     result = {
         "pipeline_run_id": plan.pipeline_run_id,
         "inserted_count": sum(item["inserted_records"] for item in dataset_results),
-        "reused_count": sum(
-            item["skipped_exact_replays"] for item in dataset_results
-        ),
+        "reused_count": sum(item["skipped_exact_replays"] for item in dataset_results),
         "conflict_count": sum(item["conflict_records"] for item in dataset_results),
         "table_count": len(dataset_results),
         "datasets": dataset_results,
@@ -553,7 +557,9 @@ def reconcile_run(
         load_result["reused_count"]
     )
     if loader_conflicts:
-        raise PipelineError(f"Iceberg loader found {loader_conflicts} immutable conflicts")
+        raise PipelineError(
+            f"Iceberg loader found {loader_conflicts} immutable conflicts"
+        )
     if loaded_or_reused != accepted:
         raise PipelineError(
             f"Iceberg count mismatch: accepted={accepted} inserted_or_reused={loaded_or_reused}"
@@ -572,7 +578,9 @@ def reconcile_run(
     }
     content = _canonical_json_bytes(summary)
     storage = _object_store(store)
-    attempt_digest = hashlib.sha256(plan.orchestrator_run_id.encode("utf-8")).hexdigest()[:16]
+    attempt_digest = hashlib.sha256(
+        plan.orchestrator_run_id.encode("utf-8")
+    ).hexdigest()[:16]
     artifact = storage.put_immutable(
         bucket=plan.raw_bucket,
         key=(
@@ -658,13 +666,13 @@ def build_dimensional_mart_step(
         raise PipelineError("coverage result belongs to another pipeline run")
     if coverage_result.get("disposition") not in {"created", "reused"}:
         raise PipelineError("dbt build requires successful coverage publication")
-    coverage_payload_sha256 = str(
-        coverage_result.get("coverage_payload_sha256", "")
-    )
+    coverage_payload_sha256 = str(coverage_result.get("coverage_payload_sha256", ""))
     if (
         len(coverage_payload_sha256) != 64
         or coverage_payload_sha256 != coverage_payload_sha256.lower()
-        or any(character not in "0123456789abcdef" for character in coverage_payload_sha256)
+        or any(
+            character not in "0123456789abcdef" for character in coverage_payload_sha256
+        )
     ):
         raise PipelineError("coverage result has an invalid canonical payload hash")
 
@@ -722,3 +730,135 @@ def build_dimensional_mart(
         environment=environment,
         command_runner=command_runner,
     )
+
+
+def publish_tested_dimensional_mart_to_clickhouse(
+    plan_value: Mapping[str, Any],
+    coverage_result_value: Mapping[str, Any],
+    dbt_test_result_value: Mapping[str, Any],
+    *,
+    environment: Mapping[str, str] | None = None,
+    publisher: Any | None = None,
+) -> dict[str, Any]:
+    """Publish only a successfully tested dimensional mart to ClickHouse.
+
+    The returned result is deliberately compact enough for Airflow XCom.  All
+    serving rows remain in ClickHouse, where a final publication marker makes
+    one fully validated ``load_attempt_id`` visible to the frontend.
+    """
+
+    from .clickhouse_publisher import (
+        PublisherConfig,
+        ServingPublisher,
+        dbt_result_identity,
+    )
+
+    plan = RunPlan.from_mapping(_require_mapping(plan_value, "plan"))
+    coverage_result = _require_mapping(coverage_result_value, "coverage_result")
+    dbt_test_result = _require_mapping(dbt_test_result_value, "dbt_test_result")
+    for name, value in (
+        ("coverage", coverage_result),
+        ("dbt test", dbt_test_result),
+    ):
+        if value.get("pipeline_run_id") != plan.pipeline_run_id:
+            raise PipelineError(f"{name} result belongs to another pipeline run")
+
+    coverage_hash = str(coverage_result.get("coverage_payload_sha256", ""))
+    if (
+        len(coverage_hash) != 64
+        or coverage_hash != coverage_hash.lower()
+        or any(character not in "0123456789abcdef" for character in coverage_hash)
+        or coverage_result.get("disposition") not in {"created", "reused"}
+    ):
+        raise PipelineError(
+            "frontend publication requires valid successful coverage metadata"
+        )
+    if dbt_test_result.get("coverage_payload_sha256") != coverage_hash:
+        raise PipelineError("final dbt tests do not match the published coverage")
+    if (
+        dbt_test_result.get("status") != "succeeded"
+        or dbt_test_result.get("dbt_step_name") != "test_complete_dimensional_mart"
+        or dbt_test_result.get("dbt_command_name") != "test"
+        or int(dbt_test_result.get("test_result_count", 0)) < 1
+    ):
+        raise PipelineError(
+            "frontend publication requires successful complete dimensional-mart tests"
+        )
+    dbt_identity = dbt_result_identity(dbt_test_result)
+
+    if publisher is None:
+        environment = environment or os.environ
+
+        def positive_number(name: str, default: str) -> float:
+            try:
+                value = float(environment.get(name, default))
+            except (TypeError, ValueError) as exc:
+                raise PipelineError(f"{name} must be a positive number") from exc
+            if value <= 0:
+                raise PipelineError(f"{name} must be a positive number")
+            return value
+
+        def positive_integer(name: str, default: str) -> int:
+            try:
+                value = int(environment.get(name, default))
+            except (TypeError, ValueError) as exc:
+                raise PipelineError(f"{name} must be a positive integer") from exc
+            if value <= 0:
+                raise PipelineError(f"{name} must be a positive integer")
+            return value
+
+        secure_value = environment.get("CLICKHOUSE_SECURE", "false").strip().lower()
+        if secure_value not in {"true", "false"}:
+            raise PipelineError("CLICKHOUSE_SECURE must be true or false")
+        publisher = ServingPublisher(
+            PublisherConfig(
+                trino_endpoint=plan.trino_url,
+                trino_catalog=environment.get(
+                    "CLICKHOUSE_SOURCE_TRINO_CATALOG",
+                    environment.get("DBT_TRINO_CATALOG", plan.iceberg_catalog),
+                ),
+                trino_schema=environment.get(
+                    "CLICKHOUSE_SOURCE_TRINO_SCHEMA",
+                    "industrial_energy_marts",
+                ),
+                trino_user=environment.get("TRINO_USER", "airflow"),
+                trino_timeout_seconds=positive_number(
+                    "TRINO_HTTP_TIMEOUT_SECONDS", "60"
+                ),
+                trino_query_timeout_seconds=positive_number(
+                    "TRINO_QUERY_TIMEOUT_SECONDS", "300"
+                ),
+                clickhouse_host=environment.get("CLICKHOUSE_HOST", "clickhouse"),
+                clickhouse_port=positive_integer("CLICKHOUSE_PORT", "8123"),
+                clickhouse_database=environment.get(
+                    "CLICKHOUSE_DATABASE", "industrial_energy_serving"
+                ),
+                clickhouse_user=require_environment(
+                    "CLICKHOUSE_PUBLISHER_USER", environment
+                ),
+                clickhouse_password=require_environment(
+                    "CLICKHOUSE_PUBLISHER_PASSWORD", environment
+                ),
+                clickhouse_secure=secure_value == "true",
+                clickhouse_timeout_seconds=positive_number(
+                    "CLICKHOUSE_HTTP_TIMEOUT_SECONDS", "60"
+                ),
+                clickhouse_query_timeout_seconds=positive_number(
+                    "CLICKHOUSE_QUERY_TIMEOUT_SECONDS", "300"
+                ),
+                insert_batch_size=positive_integer(
+                    "CLICKHOUSE_INSERT_BATCH_SIZE", "1000"
+                ),
+            )
+        )
+
+    result = publisher.publish(
+        pipeline_run_id=plan.pipeline_run_id,
+        coverage_payload_sha256=coverage_hash,
+        dbt_result_identity_sha256=dbt_identity,
+    )
+    _write_json_atomic(
+        Path(plan.work_dir) / "clickhouse-dimensional-mart-publication-result.json",
+        result,
+    )
+    return result

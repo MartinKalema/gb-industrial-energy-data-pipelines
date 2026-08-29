@@ -7,17 +7,19 @@ Iceberg catalog. There is no MinIO or other local object-store service.
 The current Compose profiles are:
 
 - `query`: local Trino connected to the Cloudflare R2 Data Catalog;
-- `batch`: local Trino plus Airflow standalone for the date-range data pipeline;
-- `product`: local Trino plus the read-only historical delivery API and web
-  product;
+- `batch`: local Trino, ClickHouse, and Airflow standalone for the date-range
+  data pipeline and tested serving-data publication;
+- `product`: local ClickHouse plus the read-only historical delivery API and
+  web product;
 - `stream`: the Spark Structured Streaming feasibility service; and
 - `smoke`: the same Spark service used by the cross-engine smoke test.
 
 The `airflow-state` named volume contains only local Airflow metadata, logs,
-generated working files, and its authentication file. Spark named volumes hold
-test checkpoints and downloaded dependencies. These volumes are not a local
-data lake; durable raw, validation, quarantine, quality, and Iceberg table data
-is stored in R2.
+generated working files, and its authentication file. The `clickhouse-data`
+volume contains the rebuildable frontend-serving copy. Spark named volumes
+hold test checkpoints and downloaded dependencies. None of these volumes is a
+local data lake; durable raw, validation, quarantine, quality, and Iceberg
+table data is stored in R2.
 
 The first executable feasibility slice pins Spark 3.5.3, Iceberg 1.6.1, and
 Trino 478. These conservative versions align with Cloudflare's published Spark
@@ -55,10 +57,13 @@ docker compose --project-directory . -f infrastructure/compose.yaml \
   --profile batch up --build airflow
 ```
 
-This builds Apache Airflow 3.3.1, starts Trino 478, and exposes the Airflow UI
-only on `127.0.0.1:${AIRFLOW_PORT:-8081}`. Airflow creates a high-entropy local
-password on first startup and persists it in the ignored named volume. See the
-[Airflow runtime guide](airflow/README.md) for sign-in and reset instructions.
+This builds Apache Airflow 3.3.1, starts Trino 478 and ClickHouse 26.3 LTS, and
+exposes the Airflow UI only on `127.0.0.1:${AIRFLOW_PORT:-8081}`. Airflow
+creates a high-entropy local password on first startup and persists it in the
+ignored named volume. ClickHouse requires the separate publisher and read-only
+API passwords documented in the [ClickHouse runtime guide](clickhouse/README.md).
+See the [Airflow runtime guide](airflow/README.md) for sign-in and reset
+instructions.
 
 The batch service receives R2 credentials from `.env` at runtime. Neither the
 image nor Compose contains secret values. It mounts the repository read-only;
@@ -79,24 +84,26 @@ the exact replay reused all 313 identities with no conflict.
 
 ## Run the historical steam-delivery product
 
-The product reads the governed dimensional marts. First run the bounded Airflow
-pipeline and confirm its final dbt checkpoint,
-`test_complete_dimensional_mart_with_dbt`, succeeded. That checkpoint is the
-data-readiness gate: it certifies the complete mart before the API and web
-product are used for an investigation.
+The product reads a tested serving copy of the governed dimensional marts.
+First run the bounded Airflow pipeline and confirm its final dbt checkpoint,
+`test_complete_dimensional_mart_with_dbt`, and the following ClickHouse
+publication task, `publish_tested_dimensional_mart_to_clickhouse`, succeeded. A
+failed publication remains invisible to the API, which continues serving the
+previous successful release.
 
-With the ignored `.env` configured for R2, start the product profile:
+With the ignored `.env` configured with the ClickHouse publisher and API
+passwords, start the product profile:
 
 ```bash
 docker compose --project-directory . -f infrastructure/compose.yaml \
   --profile product up --build
 ```
 
-The profile starts three local services:
+The profile starts three local services and does not start Trino:
 
-- Trino reads only committed Iceberg snapshots from R2;
-- `historical-delivery-api` runs bounded, parameterized, read-only queries over
-  `r2.industrial_energy_marts`; and
+- ClickHouse serves the last successfully published native-table release;
+- `historical-delivery-api` runs bounded, parameterized, read-only queries with
+  the dedicated `historical_delivery_api` account; and
 - `historical-delivery-web` server-renders the investigation interface and
   calls the API on the internal Compose network.
 
@@ -111,7 +118,8 @@ Default local endpoints are:
 | API mart readiness | <http://127.0.0.1:8000/health/ready> |
 
 Change the host ports with `PRODUCT_WEB_PORT` and `PRODUCT_API_PORT` in the
-ignored `.env` if the defaults are already in use.
+ignored `.env` if the defaults are already in use. ClickHouse's HTTP and native
+ports default to `8123` and `9000` and bind only to localhost.
 
 The local profile enables an explicit demo-identity adapter. The available
 actors are `commercial-manager`, `customer-cust-001`, and
@@ -128,5 +136,7 @@ Europe/London reporting dates separately from UTC interval timestamps.
 
 See the [API guide](../apps/api/README.md),
 [web guide](../apps/web/README.md), and
-[product architecture](../docs/architecture/historical-steam-delivery-product.md)
-for endpoint, authorization, response, and recovery details.
+[product architecture](../docs/architecture/historical-steam-delivery-product.md).
+The publication and recovery contract is in the
+[ClickHouse serving architecture](../docs/architecture/clickhouse-frontend-serving-layer.md)
+guide.

@@ -2,7 +2,10 @@
 
 ## Status
 
-Provisional architecture for a feasibility vertical slice. Dimensional entities and grains are intentionally omitted until the modeling workshop.
+Implemented local batch, dimensional-mart, ClickHouse serving, API, and web
+vertical slice. The streaming components remain the Phase 3 design. Accepted
+business grains and definitions live in `docs/modeling/` and are not redefined
+here.
 
 ## High-level design
 
@@ -30,8 +33,12 @@ Provisional architecture for a feasibility vertical slice. Dimensional entities 
                                 dbt models/tests
                                       |
                            governed dimensional marts
-                              /          |          \
-                         FastAPI    metric/rule UI   guarded AI tools
+                                      |
+                       tested Airflow publication task
+                                      |
+                          ClickHouse serving versions
+                                      |
+                           tenant-scoped FastAPI
                                       |
                               Next.js/TypeScript
 ```
@@ -47,8 +54,9 @@ Provisional architecture for a feasibility vertical slice. Dimensional entities 
 | Iceberg catalog | Table identity and current metadata pointers | Data files or analytical execution |
 | Trino | Interactive and dbt SQL over Iceberg | Stream ingestion |
 | dbt | Transformation DAG, tests, contracts, documentation, governed metrics | Continuous event processing |
+| ClickHouse | Rebuildable, versioned native tables for fast frontend reads | Canonical evidence, Iceberg ownership, or business-metric definitions |
 | PostgreSQL | Local Airflow metadata and application state | Iceberg catalog state or analytical telemetry history |
-| FastAPI | Authorization, product contracts, governed tool calls | Arbitrary user SQL |
+| FastAPI | Authorization, product contracts, ready-version selection, governed tool calls | Arbitrary user SQL or canonical data storage |
 | Next.js | Role-specific product experience | Security enforcement by itself |
 
 ## Storage layers
@@ -72,7 +80,11 @@ Raw retention makes revised market publications, meter corrections, and stream-g
    the history fact, build the dimensions, and run the final mart tests.
 5. If a dbt task fails, Airflow retries only that task. The final test task
    certifies the complete mart as ready after the earlier checkpoints succeed.
-6. The high-water mark advances only after durable writes and required checks succeed.
+6. Airflow copies the tested product projections to a new ClickHouse
+   `load_attempt_id`, validates the copy, and inserts its ready marker last.
+7. A failed publication stays invisible and the API continues serving the
+   previous good version. An exact retry reuses the ready version.
+8. The high-water mark advances only after durable writes and required checks succeed.
 
 ## Streaming flow
 
@@ -130,6 +142,8 @@ Cloudflare documents that R2 Data Catalog exposes the Iceberg REST interface at 
 ## Security boundaries
 
 - Separate ingestion credentials from read-only product credentials.
+- Use separate ClickHouse bootstrap, Airflow publisher, and read-only FastAPI
+  accounts. The bootstrap credential is never passed to a workload.
 - Restrict the R2 token to the project bucket and required operations whenever the integration permits.
 - Enforce customer/site scope in the API and analytical access policy; never rely on a hidden UI control.
 - Keep contract rates and internal maintenance notes out of customer-facing response models.
@@ -144,6 +158,10 @@ Cloudflare documents that R2 Data Catalog exposes the Iceberg REST interface at 
 - Event-time watermarks and explicit late-data policy.
 - Spark checkpoints on durable local volumes; broker offsets committed only after successful processing semantics are defined.
 - Airflow retries only idempotent tasks and exposes failed data intervals.
+- ClickHouse candidate rows are visible only after exact validation and a final
+  ready marker. A failed attempt cannot replace the previous ready version.
+- Product requests join rows to that ready marker and apply tenant scope before
+  optional filters. A page pins its requests to one returned data version.
 - Select exactly one owner for snapshot expiration and compaction. If R2 Data Catalog maintenance is enabled, Airflow observes it and does not run conflicting rewrites.
 - Health checks cover API reachability, IRIS connection age, broker lag, last Iceberg commit, dbt freshness, and product API status.
 
@@ -151,13 +169,14 @@ Cloudflare documents that R2 Data Catalog exposes the Iceberg REST interface at 
 
 Run services through Compose profiles so the laptop does not need every optional component at once:
 
-- `core`: PostgreSQL for Airflow and application metadata (R2 Data Catalog is remote)
-- `query`: Trino, started only for finite SQL, dbt, or product queries
-- `batch`: core plus query, Airflow, and the dbt runner
+- `query`: Trino, started only for finite SQL or analyst work
+- `batch`: Trino, ClickHouse, Airflow, and the dbt/publisher dependencies
 - `stream`: Redpanda, bridge/simulator, and Spark local mode; no Trino
-- `product`: query plus FastAPI and the web app
+- `product`: ClickHouse, FastAPI, and the web app; no Trino
 
-The end-to-end demo can run all required services, but ClickHouse, Kubernetes, and multi-worker Spark/Trino remain out until measurements justify them.
+ClickHouse was added after direct Trino/R2 product latency was measured. It is
+a local serving copy, not a second lakehouse. Kubernetes and multi-worker
+Spark/Trino remain out until their operational need is measured.
 
 ## Trade-offs
 
@@ -166,6 +185,8 @@ The end-to-end demo can run all required services, but ClickHouse, Kubernetes, a
 | R2 plus managed catalog | Uses the available account and removes a local catalog container | Remote dependency and beta catalog; compatibility must be verified |
 | Iceberg | Open multi-engine tables, snapshots, evolution, streaming/batch convergence | Catalog and table maintenance are additional systems |
 | Trino for dbt | Clear SQL path and good portfolio explanation | Not the stream processor |
+| ClickHouse for frontend serving | About 0.02-second local API calls over versioned native tables | Duplicates tested product data and adds a release step |
+| Ready marker written last | Partial or invalid candidates stay invisible | Old candidates require later cleanup |
 | Spark as the only stream processor | One owner for event-time state, checkpoints, deduplication, and Iceberg stream commits | Additional JVM/container footprint |
 | Redpanda single node | Kafka semantics with lighter local operations | Not representative of broker high availability |
 | Synthetic plant data | Reproducible edge cases and legal clarity | Must be labelled; cannot prove real plant integration |
@@ -174,7 +195,7 @@ The end-to-end demo can run all required services, but ClickHouse, Kubernetes, a
 ## Revisit as the system grows
 
 - R2 Data Catalog beta suitability and authentication after the smoke test
-- Whether operational latency needs a serving store such as ClickHouse
+- Incremental ClickHouse publication and old-version retention after data growth
 - Spark sizing and tuning once event volume is measured; replacing it requires a new ADR
 - Multi-tenant policy enforcement below the API layer
 - Semantic layer choice after the first metrics are stable

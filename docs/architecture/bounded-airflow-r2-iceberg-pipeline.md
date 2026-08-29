@@ -153,9 +153,13 @@ Airflow on this computer
  13. build the source-knowledge delivery-history fact
  14. build the 13 dimension and revision-audit tables
  15. run the 70 final dimensional-mart and reconciliation tests
+ 16. publish the tested dimensional mart to the local ClickHouse serving database
 
 Remote managed services
   Cloudflare R2 object storage + Cloudflare R2 Data Catalog
+
+Local serving service
+  ClickHouse stores the latest tested, versioned product copy
 ```
 
 The responsibilities are deliberately separate:
@@ -341,15 +345,16 @@ revision so the evidence history remains auditable.
 
 ## Observability and reconciliation
 
-Airflow shows task state, duration, retry count, and logs for 13 tasks. The first
+Airflow shows task state, duration, retry count, and logs for 14 tasks. The first
 seven check the run inputs, generate the source files, save the originals in
 R2, check rows and save failures separately, load accepted rows into Iceberg,
 verify every row was handled, and record the loaded date range. The next six
 prepare/test staging, prepare/test calculations, build the current fact, build
-the history fact, build the dimensions, and run final mart tests. Small task
-summaries include hashes, locations, and counts. Each dbt task streams its own
-model or test progress to the Airflow log and returns only its invocation ID,
-version, elapsed time, aggregate statuses, and artifact paths.
+the history fact, build the dimensions, and run final mart tests. The final
+task publishes only that tested result to ClickHouse for fast product reads.
+Small task summaries include hashes, locations, and counts. Each dbt task
+streams its own model or test progress to the Airflow log and returns only its
+invocation ID, version, elapsed time, aggregate statuses, and artifact paths.
 
 The validation report records total and per-dataset accepted, quarantined, and
 exact-replay counts; quarantine-reason counts; accepted row identities/hashes;
