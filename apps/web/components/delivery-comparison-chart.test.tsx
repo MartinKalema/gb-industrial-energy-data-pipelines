@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -79,6 +81,11 @@ const visibleIntervals = [
     excess_mwh_th: "0.500000",
   },
 ];
+
+const chartSource = readFileSync(
+  resolve(process.cwd(), "components/delivery-comparison-chart.tsx"),
+  "utf8",
+);
 
 Object.defineProperties(HTMLElement.prototype, {
   hasPointerCapture: { configurable: true, value: vi.fn(() => false) },
@@ -221,6 +228,16 @@ describe("delivery chart data", () => {
     expect(shouldShowChartNavigator(48)).toBe(false);
     expect(shouldShowChartNavigator(96)).toBe(false);
     expect(shouldShowChartNavigator(97)).toBe(true);
+  });
+
+  it("names chart SVGs without native title tooltips", () => {
+    expect(chartSource).not.toMatch(/title=\{`(?:Committed|Governed shortfall)/);
+    expect(chartSource).toContain(
+      'aria-label={`Committed, delivered and final capacity for ${selectedSeries.label}`}',
+    );
+    expect(chartSource).toContain(
+      'aria-label={`Governed shortfall and excess for ${selectedSeries.label}`}',
+    );
   });
 });
 

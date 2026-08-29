@@ -482,7 +482,7 @@ export function DeliveryComparisonChart({
               data={data}
               accessibilityLayer
               role="img"
-              title={`Committed, delivered and final capacity for ${selectedSeries.label}`}
+              aria-label={`Committed, delivered and final capacity for ${selectedSeries.label}`}
               desc="Thirty-minute energy profile. Missing values break the line instead of being shown as zero."
               margin={{ top: 18, right: 22, bottom: 12, left: 6 }}
             >
@@ -555,7 +555,7 @@ export function DeliveryComparisonChart({
               data={data}
               accessibilityLayer
               role="img"
-              title={`Governed shortfall and excess for ${selectedSeries.label}`}
+              aria-label={`Governed shortfall and excess for ${selectedSeries.label}`}
               desc="Excess appears above zero, shortfall below zero, real zero as an outlined circle, and unavailable evidence as a diamond."
               margin={{ top: 18, right: 22, bottom: 12, left: 6 }}
             >
