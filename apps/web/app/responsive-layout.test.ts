@@ -53,7 +53,7 @@ describe("responsive containment rules", () => {
       /\.evidence-chart__scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s,
     );
     expect(css).toMatch(
-      /\.analysis-chart__body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*390px;/s,
+      /\.analysis-chart__body\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*330px;/s,
     );
     expect(css).toMatch(
       /\.evidence-cell--missing\s*\{[^}]*repeating-linear-gradient/s,
