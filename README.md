@@ -23,6 +23,12 @@ calculations, build the two facts and dimensions, and then test the complete
 dimensional mart. If one dbt task fails, Airflow retries that task without
 repeating the earlier successful dbt tasks.
 
+The first read-only historical delivery product is now implemented on top of
+that mart. A FastAPI boundary enforces demo customer scope and a server-rendered
+Next.js interface lets commercial and customer personas investigate known,
+provisional, final, missing, and corrected interval results. The interface
+shows missing governed values as unavailable; it never changes them to zero.
+
 ## Why this project
 
 One coherent product can demonstrate:
@@ -66,7 +72,8 @@ Live plant simulator -------------------/          |
                                              Iceberg on R2
 
 QUERY (after Spark commits an Iceberg snapshot)
-Analyst / dbt / product API -> Trino -> Iceberg on R2
+Analyst / dbt -> Trino -> Iceberg on R2
+Historical web -> read-only product API -> Trino -> governed Iceberg marts on R2
 ```
 
 All compute services run locally. Cloudflare R2 is the only object-storage
@@ -88,6 +95,54 @@ The public source APIs also remain remote.
 - `ai/` — read-only assistant tools and proactive evaluation suite
 - `infrastructure/` — local Docker Compose and engine configuration
 
+## Historical steam-delivery product
+
+The implemented product answers a focused historical investigation:
+
+- Which customer, site, delivery point, and 30-minute interval missed its steam
+  commitment?
+- How much accepted delivery, shortfall, excess, billable energy, and known
+  financial value is currently supported by the evidence?
+- Is an SLA, availability, penalty/credit, or net result final, provisional,
+  missing, or not applicable?
+- Did a later source revision change what the business knew about an interval?
+
+The final dbt checkpoint,
+`test_complete_dimensional_mart_with_dbt`, certifies the mart before it is used
+as product-ready data. After that checkpoint succeeds, start the local product
+profile:
+
+```bash
+docker compose --project-directory . -f infrastructure/compose.yaml \
+  --profile product up --build
+```
+
+With the default ports:
+
+- web product: <http://127.0.0.1:3000>
+- web health: <http://127.0.0.1:3000/healthz>
+- API documentation: <http://127.0.0.1:8000/docs>
+- API dependency readiness: <http://127.0.0.1:8000/health/ready>
+
+The web server calls the API; the browser does not query Trino and does not
+construct the demo identity header. The API accepts bounded filters and runs
+parameterized, read-only queries against the governed current and history marts.
+The API—not the interface—is the authorization boundary.
+
+The local profile has three demonstration personas:
+`commercial-manager`, `customer-cust-001`, and `customer-cust-002`. The two
+customer personas are restricted to their own fictional customer/site/delivery
+point scope. This selector demonstrates authorization behavior only; it is not
+a production login or identity provider.
+
+Known subtotals may be shown while a result is provisional. Official SLA,
+availability, penalty/credit, and net financial values remain unavailable until
+their governed completeness and finality gates pass. An API `null` is rendered
+as **Unavailable**, never as `0`. See the
+[product architecture](docs/architecture/historical-steam-delivery-product.md),
+[API guide](apps/api/README.md), and [web guide](apps/web/README.md) for the
+complete contract and local run instructions.
+
 ## Current decisions
 
 | Decision | Status |
@@ -106,7 +161,9 @@ The public source APIs also remain remote.
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
 | Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
-| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, and restartable coverage-to-dbt orchestration implemented; presentation and FUELHH remain |
+| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt orchestration, and the focused historical product are implemented; FUELHH remains |
+| Historical product API | Implemented: read-only, tenant-scoped FastAPI over governed current/history marts |
+| Historical web product | Implemented: server-rendered commercial/customer investigation and revision history |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 

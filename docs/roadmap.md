@@ -75,6 +75,16 @@ missing-versus-zero, capacity-precedence, event-time relationship, grain,
 lineage, and key rules are executable tests. Incremental processing remains a
 measurement-driven later optimization.
 
+**Historical delivery product milestone:** implemented and locally verified on
+2026-08-29. The product profile serves a read-only, tenant-scoped FastAPI over
+the governed current/history marts and a server-rendered investigation
+interface for one commercial and two customer demo personas. It exposes known
+subtotals without presenting provisional values as official, preserves
+`null` as unavailable rather than zero, shows Europe/London operating dates and
+UTC evidence timestamps, and lets an authorized user inspect an interval's
+source-knowledge history. Product data readiness follows the successful final
+dbt checkpoint; the API and interface do not replace that test gate.
+
 - Resolve and record the Phase 2 source-contract entry decisions for deliverable
   capacity, shared-capacity allocation, commitment/contract revisions, and
   approved excess orders.
@@ -98,6 +108,9 @@ The implemented batch boundary is described in the
 [bounded Airflow-to-R2-and-Iceberg runbook](architecture/bounded-airflow-r2-iceberg-pipeline.md).
 The implemented analytical boundary is described in the
 [steam-delivery dbt dimensional-mart runbook](architecture/steam-delivery-dbt-dimensional-mart.md).
+The focused read-only product is described in the
+[historical delivery product architecture](architecture/historical-steam-delivery-product.md),
+[API guide](../apps/api/README.md), and [web guide](../apps/web/README.md).
 
 ## Phase 3 — streaming vertical slice
 
@@ -119,6 +132,12 @@ The implemented analytical boundary is described in the
 **Demo:** trace a plant outage to availability, shortfall, penalty, and revenue impact.
 
 ## Phase 5 — full-stack product and security
+
+**Early slice delivered in Phase 2:** the focused historical commercial and
+customer investigation, API scope enforcement, negative authorization tests,
+request tracing, and service health checks are implemented. Phase 5 remains
+open for operator/live experiences, production identity, broader policy
+enforcement, and the complete product-security scope below.
 
 - Build role-specific operator, commercial, and customer experiences.
 - Enforce customer/site scope in FastAPI and analytical policies.
