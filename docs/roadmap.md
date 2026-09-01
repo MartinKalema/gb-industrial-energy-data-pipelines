@@ -96,6 +96,16 @@ API calls fell from multi-second Trino/R2 queries to about 0.02 seconds, and the
 server-rendered page measured about 0.17 seconds. R2/Iceberg remains canonical,
 and the serving copy performs no new business calculations.
 
+**Production-readiness controls milestone:** implemented and Airflow-image
+verified on 2026-09-02. A separate noon `Europe/London` daily DAG calls the
+bounded workflow for the previous operating date and requires the complete
+child run by 16:00. API readiness now checks serving integrity, publication age,
+and identity mode; a bounded operational command produces alert/load evidence;
+and serialized ClickHouse cleanup protects the newest two ready versions while
+leaving R2/Iceberg untouched. The real identity provider, alert delivery,
+canonical backup/RPO/RTO policy, and a full scheduled end-to-end run remain
+deployment decisions or evidence, not invented local claims.
+
 - Resolve and record the Phase 2 source-contract entry decisions for deliverable
   capacity, shared-capacity allocation, commitment/contract revisions, and
   approved excess orders.
@@ -104,7 +114,8 @@ and the serving copy performs no new business calculations.
   the steam-delivery mart.
 - Store raw evidence and validated Iceberg tables on R2.
 - Use dbt-trino to build and test the first dimensional mart.
-- Add freshness, lineage, reconciliation, and a basic historical dashboard/API.
+- Keep the implemented freshness, lineage, reconciliation, and historical
+  dashboard/API controls green while completing the remaining FUELHH sidecar.
 
 **Demo:** rerun a date range idempotently and explain one historical delivery shortfall.
 
@@ -122,6 +133,9 @@ The implemented analytical boundary is described in the
 The focused read-only product is described in the
 [historical delivery product architecture](architecture/historical-steam-delivery-product.md),
 [ClickHouse frontend serving architecture](architecture/clickhouse-frontend-serving-layer.md),
+[daily publication and serving ADR](architecture/adr-003-daily-publication-and-serving-operations.md),
+[API readiness and capacity checks](operations/api-production-readiness.md),
+[ClickHouse retention and recovery](operations/clickhouse-serving-retention-and-recovery.md),
 [API guide](../apps/api/README.md), and [web guide](../apps/web/README.md).
 
 ## Phase 3 — streaming vertical slice
@@ -175,8 +189,10 @@ enforcement, and the complete product-security scope below.
 
 ## Optional extensions
 
-- Incremental ClickHouse publication and old-version retention only after data
-  growth makes full versioned snapshots expensive.
+- Incremental ClickHouse publication only after data growth makes full
+  versioned snapshots expensive. Count-based cleanup keeps the newest two ready
+  versions now; a longer time-based client-retention promise remains a future
+  operating-policy decision.
 - MCP exposure of the same governed read-only tools.
 - Day-ahead recommendation model after metric definitions are trustworthy.
 - Production identity provider and catalog authorization.

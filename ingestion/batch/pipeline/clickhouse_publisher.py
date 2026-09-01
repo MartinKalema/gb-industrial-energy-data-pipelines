@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -428,6 +429,84 @@ class PublisherConfig:
             raise ServingPublicationError(
                 "ClickHouse insert batch size must be between 1 and 10000"
             )
+
+
+def publisher_config_from_environment(
+    environment: Mapping[str, str] | None = None,
+    *,
+    trino_endpoint: str | None = None,
+    default_trino_catalog: str = "r2",
+) -> PublisherConfig:
+    """Build and validate the shared publisher/retention connection config."""
+
+    if environment is None:
+        environment = os.environ
+
+    def positive_number(name: str, default: str) -> float:
+        try:
+            value = float(environment.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ServingPublicationError(f"{name} must be a positive number") from exc
+        if value <= 0:
+            raise ServingPublicationError(f"{name} must be a positive number")
+        return value
+
+    def positive_integer(name: str, default: str) -> int:
+        try:
+            value = int(environment.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ServingPublicationError(f"{name} must be a positive integer") from exc
+        if value <= 0:
+            raise ServingPublicationError(f"{name} must be a positive integer")
+        return value
+
+    def required(name: str) -> str:
+        value = environment.get(name, "").strip()
+        if not value:
+            raise ServingPublicationError(
+                f"required environment variable {name} is missing"
+            )
+        return value
+
+    secure_value = environment.get("CLICKHOUSE_SECURE", "false").strip().lower()
+    if secure_value not in {"true", "false"}:
+        raise ServingPublicationError("CLICKHOUSE_SECURE must be true or false")
+
+    resolved_trino_endpoint = trino_endpoint or environment.get(
+        "TRINO_URL", "http://trino:8080"
+    )
+    config = PublisherConfig(
+        trino_endpoint=resolved_trino_endpoint,
+        trino_catalog=environment.get(
+            "CLICKHOUSE_SOURCE_TRINO_CATALOG",
+            environment.get("DBT_TRINO_CATALOG", default_trino_catalog),
+        ),
+        trino_schema=environment.get(
+            "CLICKHOUSE_SOURCE_TRINO_SCHEMA", "industrial_energy_marts"
+        ),
+        trino_user=environment.get("TRINO_USER", "airflow"),
+        trino_timeout_seconds=positive_number("TRINO_HTTP_TIMEOUT_SECONDS", "60"),
+        trino_query_timeout_seconds=positive_number(
+            "TRINO_QUERY_TIMEOUT_SECONDS", "300"
+        ),
+        clickhouse_host=environment.get("CLICKHOUSE_HOST", "clickhouse"),
+        clickhouse_port=positive_integer("CLICKHOUSE_PORT", "8123"),
+        clickhouse_database=environment.get(
+            "CLICKHOUSE_DATABASE", "industrial_energy_serving"
+        ),
+        clickhouse_user=required("CLICKHOUSE_PUBLISHER_USER"),
+        clickhouse_password=required("CLICKHOUSE_PUBLISHER_PASSWORD"),
+        clickhouse_secure=secure_value == "true",
+        clickhouse_timeout_seconds=positive_number(
+            "CLICKHOUSE_HTTP_TIMEOUT_SECONDS", "60"
+        ),
+        clickhouse_query_timeout_seconds=positive_number(
+            "CLICKHOUSE_QUERY_TIMEOUT_SECONDS", "300"
+        ),
+        insert_batch_size=positive_integer("CLICKHOUSE_INSERT_BATCH_SIZE", "1000"),
+    )
+    config.validate()
+    return config
 
 
 @dataclass(frozen=True, slots=True)

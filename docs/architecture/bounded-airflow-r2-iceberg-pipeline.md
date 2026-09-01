@@ -122,11 +122,11 @@ contains 608 source revisions. After current-revision selection, the mart grain
 is smaller: two delivery points times 48 half-hours gives 96 delivery facts per
 ordinary day.
 
-If regular data growth is wanted later, keep this manual DAG for backfills and
-add a separate daily DAG. That DAG should derive one completed
-`Europe/London` operating date from Airflow's logical data interval, retain the
-fixed seed, and call the same bounded workflow. It should run late enough for
-the deliberately delayed synthetic corrections to have been published.
+Regular data growth uses the separate `daily_steam_delivery_data_pipeline`.
+It derives one completed `Europe/London` operating date from Airflow's resolved
+data interval, retains the fixed seed, and calls this same bounded workflow at
+12:00 London after the deliberately delayed synthetic corrections have been
+published. This DAG remains the manual replay and backfill entry point.
 
 Growing history does not by itself require dbt incremental models. A full
 rebuild is still correct and is useful as the initial correctness baseline at
@@ -154,6 +154,7 @@ Airflow on this computer
  14. build the 13 dimension and revision-audit tables
  15. run the 70 final dimensional-mart and reconciliation tests
  16. publish the tested dimensional mart to the local ClickHouse serving database
+ 17. keep the newest ClickHouse versions and remove older or incomplete copies
 
 Remote managed services
   Cloudflare R2 object storage + Cloudflare R2 Data Catalog
@@ -310,8 +311,9 @@ revisions are append-only evidence here; choosing a current revision belongs in
 the later dbt model.
 
 Iceberg does not enforce a unique constraint on `pipeline_identity_sha256`.
-`max_active_runs=1` serializes this DAG, and its source load, coverage, and six
-dbt tasks use the provisioned one-slot `iceberg_writer` Airflow pool. Every
+`max_active_runs=1` serializes this DAG, and its source load, coverage, six dbt
+tasks, ClickHouse publication, and serving cleanup use the provisioned one-slot
+`iceberg_writer` Airflow pool. Every
 future manual or backfill DAG that writes these tables must use that same pool.
 The insert-only merge and post-write identity/hash check make completed
 chunks safe to retry after a partial failure, but they do not replace writer
@@ -337,6 +339,7 @@ the pool and must not overlap any of the DAG's dbt tasks.
 | A dbt model or data test fails | That dbt checkpoint and the DAG fail; reconciled source rows, coverage, and earlier successful checkpoints remain valid | Inspect that task's dbt log, correct the cause, and retry or clear only the failed task |
 | A dbt checkpoint exceeds 120 minutes, exits with an error, or is interrupted | Stops that local process group, cancels only active Trino queries with the exact task-attempt user/tag, and waits for a stable no-active-query result before releasing the writer pool | After confirmed cleanup, the normal retry of that checkpoint is safe; inspect its dbt/Trino logs for the cause |
 | Trino cannot confirm dbt query cleanup within 60 seconds | Fails the checkpoint without an automatic retry, because the previous write state is uncertain | Verify that no query with the logged task-attempt tag remains active, resolve Trino connectivity or cancellation, then rerun that checkpoint manually |
+| Retention cleanup fails after publication | The validated publication may already be visible, but the Airflow run remains failed because maintenance did not finish | Repair the ClickHouse issue and retry only `remove_old_clickhouse_serving_versions`; do not repeat source loading, dbt, or publication |
 | Airflow container stops after a partial task | Task history and work files remain in the named volume | Restart and retry with the same four inputs |
 
 Do not repair a failed run by editing a raw R2 object, accepted JSONL, or an
@@ -345,13 +348,15 @@ revision so the evidence history remains auditable.
 
 ## Observability and reconciliation
 
-Airflow shows task state, duration, retry count, and logs for 14 tasks. The first
+Airflow shows task state, duration, retry count, and logs for 15 tasks. The first
 seven check the run inputs, generate the source files, save the originals in
 R2, check rows and save failures separately, load accepted rows into Iceberg,
 verify every row was handled, and record the loaded date range. The next six
 prepare/test staging, prepare/test calculations, build the current fact, build
-the history fact, build the dimensions, and run final mart tests. The final
-task publishes only that tested result to ClickHouse for fast product reads.
+the history fact, build the dimensions, and run final mart tests. The next task
+publishes only that tested result to ClickHouse for fast product reads. The
+fifteenth task protects the newest two ready versions when they exist and
+removes older or incomplete ClickHouse copies without touching R2 or Iceberg.
 Small task summaries include hashes, locations, and counts. Each dbt task
 streams its own model or test progress to the Airflow log and returns only its
 invocation ID, version, elapsed time, aggregate statuses, and artifact paths.

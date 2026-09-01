@@ -13,16 +13,18 @@ canonical.
 
 ## Run locally
 
-ClickHouse must be running and Airflow must have completed
-`publish_tested_dimensional_mart_to_clickhouse` at least once. The normal local
-path is the root Compose `product` profile. To run only the API process outside
-Compose, first export the ignored `.env` values, then map the read-only password
-to the API setting:
+ClickHouse must be running, and a ready Airflow publication must exist and be
+younger than the configured age limit. The normal local path is the root
+Compose `product` profile. For an intentionally static historical demonstration
+only, set `PRODUCT_MAX_PUBLICATION_AGE_SECONDS=0`; do not use that as a
+production default. To run only the API process outside Compose, first export
+the ignored `.env` values, then map the read-only password to the API setting:
 
 ```bash
 uv sync --frozen
 PRODUCT_DEMO_MODE=true \
 PRODUCT_REPOSITORY_BACKEND=clickhouse \
+PRODUCT_MAX_PUBLICATION_AGE_SECONDS=108000 \
 CLICKHOUSE_HOST=127.0.0.1 \
 CLICKHOUSE_USER=historical_delivery_api \
 CLICKHOUSE_PASSWORD="$CLICKHOUSE_API_PASSWORD" \
@@ -84,7 +86,8 @@ All `/api/v1` endpoints require `X-Demo-Actor` in the local profile.
 | Endpoint | Contract |
 |---|---|
 | `GET /health/live` | The API process can answer HTTP. |
-| `GET /health/ready` | The latest ready publication exists and its marked current/history row counts match the marker. |
+| `GET /health/ready` | Identity mode, repository access, ready-publication row counts, and configured publication age are safe for traffic. Returns detailed technical evidence with HTTP `200` or `503`. |
+| `GET /health/metrics` | Process-local uptime, request, error, and duration counters without customer or governed-value labels. |
 | `GET /api/v1/context` | Actor, authorized customer/site/delivery-point options, available reporting dates, `data_version`, and `data_published_at_utc`. |
 | `GET /api/v1/delivery-performance/summary` | Governed counts, known subtotals, completeness gates, official percentages, financial state, and freshness. |
 | `GET /api/v1/delivery-performance/intervals` | Stable, bounded page of current half-hour results and all relevant data/result states. |
@@ -132,6 +135,10 @@ Successful and error responses echo a safe `X-Request-ID`. Errors use:
 Structured request logs contain the request ID, actor, resolved tenant scope,
 requested customer/site filters, route, status, and duration. They intentionally
 exclude measurements, contract values, credentials, and raw evidence.
+Health responses also exclude those values. See the
+[API operational checks](../../docs/operations/api-production-readiness.md) for
+the 30-hour Compose freshness backstop, alert exit codes, capacity-evidence
+command, and production gaps.
 
 ## Configuration
 
@@ -149,6 +156,7 @@ exclude measurements, contract values, credentials, and raw evidence.
 | `PRODUCT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS` | `60` | Server-enforced query execution limit. |
 | `PRODUCT_MAX_QUERY_DAYS` | `31` | Maximum inclusive reporting-date range. |
 | `PRODUCT_MAX_PAGE_SIZE` | `200` | Configurable page cap, never above 200. |
+| `PRODUCT_MAX_PUBLICATION_AGE_SECONDS` | `0` outside Compose; `108000` in the Compose product profile | Maximum ready-publication age. `0` disables only this check; production must use an accepted non-zero freshness limit. |
 
 The database is configurable for isolated tests, but relation names are fixed
 in code. Identifier validation prevents configuration from introducing
@@ -161,6 +169,7 @@ path in Compose.
 ```bash
 uv run pytest -q tests/api
 docker build -f apps/api/Dockerfile -t historical-delivery-api .
+uv run python -m apps.api.operational_check --url http://127.0.0.1:8000/health/ready
 ```
 
 The focused suite verifies identity failures, cross-tenant denial, tenant and
@@ -169,6 +178,11 @@ revision-history authorization, reporting-date bounds, pagination bounds,
 readiness, bounded queries, history truncation, privacy-safe failure logging,
 exact aggregate gates, exact decimal strings, and the difference between a
 missing value and a real zero.
+
+The operational check prints JSON and exits non-zero when readiness, the
+allowed error rate, or the p95 latency limit fails. A bounded concurrent mode
+records repeatable local capacity evidence. It is not a substitute for a
+production load test with representative traffic.
 
 See the
 [ClickHouse frontend serving architecture](../../docs/architecture/clickhouse-frontend-serving-layer.md)

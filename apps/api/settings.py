@@ -26,6 +26,13 @@ def _positive_integer(name: str, default: int) -> int:
     return value
 
 
+def _non_negative_integer(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value < 0:
+        raise ValueError(f"{name} must be zero or greater")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Validated service settings with conservative local defaults."""
@@ -50,6 +57,7 @@ class Settings:
     clickhouse_database: str = "industrial_energy_serving"
     maximum_query_days: int = 31
     maximum_page_size: int = 200
+    maximum_publication_age_seconds: int = 0
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -95,6 +103,9 @@ class Settings:
             ).strip(),
             maximum_query_days=_positive_integer("PRODUCT_MAX_QUERY_DAYS", 31),
             maximum_page_size=_positive_integer("PRODUCT_MAX_PAGE_SIZE", 200),
+            maximum_publication_age_seconds=_non_negative_integer(
+                "PRODUCT_MAX_PUBLICATION_AGE_SECONDS", 0
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -149,4 +160,8 @@ class Settings:
         if self.maximum_page_size > 200:
             raise ValueError(
                 "maximum_page_size must not exceed the API contract cap of 200"
+            )
+        if self.maximum_publication_age_seconds < 0:
+            raise ValueError(
+                "maximum_publication_age_seconds must be zero or greater"
             )

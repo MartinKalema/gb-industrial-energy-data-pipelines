@@ -16,6 +16,7 @@ from apps.api.repository import (
     DataVersionUnavailable,
     MartIntegrityError,
     QueryScope,
+    RepositoryReadiness,
     RepositoryUnavailable,
     SummaryAggregate,
     _integer,
@@ -277,22 +278,24 @@ class ClickHouseDeliveryPerformanceRepository:
             raise RepositoryUnavailable("No ready product data publication exists")
         return DataPublication(**rows[0])
 
-    def is_ready(self) -> bool:
+    def get_readiness(self) -> RepositoryReadiness:
         try:
             publication = self._resolve_publication()
             counts = self._fetch_one(
                 f"""
                     SELECT
-                        p.current_row_count = (
+                        p.current_row_count AS expected_current_row_count,
+                        (
                             SELECT count()
                             FROM {self._relations["current"]}
                             WHERE load_attempt_id = {{publication_id:String}}
-                        ) AS current_matches,
-                        p.history_row_count = (
+                        ) AS actual_current_row_count,
+                        p.history_row_count AS expected_history_row_count,
+                        (
                             SELECT count()
                             FROM {self._relations["history"]}
                             WHERE load_attempt_id = {{publication_id:String}}
-                        ) AS history_matches
+                        ) AS actual_history_row_count
                     FROM {self._relations["publication"]} AS p
                     WHERE p.publication_status = {{ready_status:String}}
                       AND p.publication_id = {{publication_id:String}}
@@ -302,9 +305,40 @@ class ClickHouseDeliveryPerformanceRepository:
                     "publication_id": publication.data_version,
                 },
             )
-        except (MartIntegrityError, RepositoryUnavailable):
-            return False
-        return bool(counts["current_matches"] and counts["history_matches"])
+        except MartIntegrityError:
+            return RepositoryReadiness(
+                backend="clickhouse",
+                ready=False,
+                reason="integrity_check_failed",
+            )
+        except RepositoryUnavailable:
+            return RepositoryReadiness(
+                backend="clickhouse",
+                ready=False,
+                reason="repository_unavailable",
+            )
+
+        expected_current = _integer(counts["expected_current_row_count"])
+        actual_current = _integer(counts["actual_current_row_count"])
+        expected_history = _integer(counts["expected_history_row_count"])
+        actual_history = _integer(counts["actual_history_row_count"])
+        counts_match = (
+            expected_current == actual_current and expected_history == actual_history
+        )
+        return RepositoryReadiness(
+            backend="clickhouse",
+            ready=counts_match,
+            reason="ready" if counts_match else "row_count_mismatch",
+            data_version=publication.data_version,
+            data_published_at_utc=publication.data_published_at_utc,
+            expected_current_row_count=expected_current,
+            actual_current_row_count=actual_current,
+            expected_history_row_count=expected_history,
+            actual_history_row_count=actual_history,
+        )
+
+    def is_ready(self) -> bool:
+        return self.get_readiness().ready
 
     def get_context(
         self, actor: Actor, *, data_version: str | None = None

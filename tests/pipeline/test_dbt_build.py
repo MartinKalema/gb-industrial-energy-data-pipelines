@@ -1204,10 +1204,10 @@ def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() ->
             for decorator in node.decorator_list
         )
     )
-    # Seven source/control tasks and the frontend publication task are
-    # instantiated once. The generic dbt definition is instantiated through
-    # six named overrides.
-    assert task_function_count - 1 + len(checkpoint_assignments) == 14
+    # Seven source/control tasks, frontend publication, and serving retention
+    # are instantiated once. The generic dbt definition is instantiated
+    # through six named overrides.
+    assert task_function_count - 1 + len(checkpoint_assignments) == 15
 
     def flattened_dependencies(node: ast.AST) -> list[str]:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.RShift):
@@ -1224,4 +1224,8 @@ def test_dag_has_six_restartable_dbt_checkpoints_with_safe_retry_boundaries() ->
         if isinstance(node, ast.Expr)
     ]
     checkpoint_names = [name for name, _task_id, _step_name in checkpoint_assignments]
-    assert [*checkpoint_names, "clickhouse_publication"] in dependency_chains
+    assert [
+        *checkpoint_names,
+        "clickhouse_publication",
+        "serving_retention",
+    ] in dependency_chains

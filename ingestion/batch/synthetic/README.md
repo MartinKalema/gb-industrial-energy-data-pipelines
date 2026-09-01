@@ -84,7 +84,7 @@ experiments whose rows will not be loaded into the project catalog.
 
 Range composition is guaranteed: generating 26 August and 27 August
 separately produces the same source-revision identities and payloads as
-generating 26–27 August together. This is what makes a later daily schedule or
+generating 26–27 August together. This is what makes the implemented daily schedule or
 overlapping manual backfill safe. The original 26 August reference bundle
 remains byte-compatible with its known-good source hashes.
 

@@ -265,6 +265,29 @@ def steam_delivery_data_pipeline():
             ),
         )
 
+    @task(
+        task_id="remove_old_clickhouse_serving_versions",
+        multiple_outputs=False,
+        pool="iceberg_writer",
+        pool_slots=1,
+        execution_timeout=timedelta(minutes=20),
+        retries=2,
+        retry_delay=timedelta(minutes=1),
+    )
+    def remove_old_clickhouse_serving_versions(
+        publication_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep the newest serving versions and remove failed or older copies."""
+
+        from ingestion.batch.pipeline.workflow import (
+            remove_old_clickhouse_serving_versions as remove_old_versions,
+        )
+
+        return _small_xcom(
+            "remove_old_clickhouse_serving_versions",
+            remove_old_versions(publication_result),
+        )
+
     plan = validate_and_prepare_run()
     generation_result = generate_source_files(plan)
     raw_result = save_original_source_files(plan, generation_result)
@@ -299,6 +322,9 @@ def steam_delivery_data_pipeline():
         coverage_result,
         test_complete_mart,
     )
+    serving_retention = remove_old_clickhouse_serving_versions(
+        clickhouse_publication
+    )
 
     (
         prepare_loaded_data
@@ -308,6 +334,7 @@ def steam_delivery_data_pipeline():
         >> build_dimensions
         >> test_complete_mart
         >> clickhouse_publication
+        >> serving_retention
     )
 
 

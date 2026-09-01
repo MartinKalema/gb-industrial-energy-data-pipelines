@@ -28,6 +28,7 @@ testpaths = [
   "tests/contracts",
   "tests/api",
   "tests/generator",
+  "tests/orchestration",
   "tests/pipeline",
 ]
 

@@ -49,8 +49,17 @@ class FakeClickHouseClient:
                     }
                 ]
             )
-        if "AS current_matches" in query:
-            return FakeResult([{"current_matches": True, "history_matches": True}])
+        if "AS expected_current_row_count" in query:
+            return FakeResult(
+                [
+                    {
+                        "expected_current_row_count": 96,
+                        "actual_current_row_count": 96,
+                        "expected_history_row_count": 558,
+                        "actual_history_row_count": 558,
+                    }
+                ]
+            )
         if "GROUP BY" in query and "minimum_reporting_date" in query:
             return FakeResult(
                 [
@@ -224,7 +233,13 @@ def test_context_can_be_pinned_to_a_ready_publication() -> None:
 def test_readiness_checks_both_published_serving_tables() -> None:
     repository, client = repository_with_fake()
 
-    assert repository.is_ready() is True
+    readiness = repository.get_readiness()
+
+    assert readiness.ready is True
+    assert readiness.data_version == DATA_VERSION
+    assert readiness.data_published_at_utc == PUBLISHED_AT
+    assert readiness.expected_current_row_count == 96
+    assert readiness.actual_history_row_count == 558
 
     integrity_sql, parameters, _settings = client.calls[1]
     assert "delivery_interval_current" in integrity_sql
@@ -245,8 +260,17 @@ def test_readiness_fails_when_a_published_serving_table_count_does_not_match() -
             parameters: dict[str, Any] | None = None,
             settings: dict[str, Any] | None = None,
         ) -> FakeResult:
-            if "AS current_matches" in query:
-                return FakeResult([{"current_matches": True, "history_matches": False}])
+            if "AS expected_current_row_count" in query:
+                return FakeResult(
+                    [
+                        {
+                            "expected_current_row_count": 96,
+                            "actual_current_row_count": 96,
+                            "expected_history_row_count": 558,
+                            "actual_history_row_count": 557,
+                        }
+                    ]
+                )
             return super().query(query, parameters, settings)
 
     repository = ClickHouseDeliveryPerformanceRepository(
@@ -258,7 +282,12 @@ def test_readiness_fails_when_a_published_serving_table_count_does_not_match() -
         client=MismatchedServingClient(),
     )
 
-    assert repository.is_ready() is False
+    readiness = repository.get_readiness()
+
+    assert readiness.ready is False
+    assert readiness.reason == "row_count_mismatch"
+    assert readiness.expected_history_row_count == 558
+    assert readiness.actual_history_row_count == 557
 
 
 def test_summary_without_version_uses_the_latest_ready_publication() -> None:

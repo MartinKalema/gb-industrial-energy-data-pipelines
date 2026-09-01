@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
@@ -26,18 +28,23 @@ from apps.api.models import (
     DeliveryPerformanceSummaryResponse,
     ErrorResponse,
     HealthResponse,
+    OperationalCheckResponse,
+    OperationalMetricsResponse,
     ProductContextResponse,
+    ReadinessResponse,
 )
 from apps.api.repository import (
     DataVersionUnavailable,
     DeliveryPerformanceRepository,
     MartIntegrityError,
     QueryScope,
+    RepositoryReadiness,
     RepositoryUnavailable,
     TrinoDeliveryPerformanceRepository,
 )
 from apps.api.request_logging import (
     RequestAuditMiddleware,
+    RequestMetrics,
     configure_request_audit_logging,
 )
 from apps.api.service import DeliveryPerformanceService
@@ -173,6 +180,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     repository: DeliveryPerformanceRepository | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     if repository is None:
@@ -191,8 +199,10 @@ def create_app(
     app.state.repository = repository
     app.state.service = DeliveryPerformanceService(repository)
     app.state.identity_adapter = DemoIdentityAdapter(enabled=settings.demo_mode)
+    app.state.clock = clock or (lambda: datetime.now(UTC))
+    app.state.request_metrics = RequestMetrics()
     configure_request_audit_logging()
-    app.add_middleware(RequestAuditMiddleware)
+    app.add_middleware(RequestAuditMiddleware, metrics=app.state.request_metrics)
 
     @app.exception_handler(AuthenticationFailed)
     async def authentication_error(
@@ -272,21 +282,155 @@ def create_app(
 
     @app.get(
         "/health/ready",
-        response_model=HealthResponse,
-        responses={503: {"model": ErrorResponse}},
+        response_model=ReadinessResponse,
+        responses={503: {"model": ReadinessResponse}},
     )
-    def health_ready() -> HealthResponse | JSONResponse:
+    def health_ready() -> ReadinessResponse | JSONResponse:
+        checked_at = app.state.clock()
+        if checked_at.tzinfo is None or checked_at.utcoffset() is None:
+            raise RuntimeError("The readiness clock must be timezone-aware")
+        checked_at = checked_at.astimezone(UTC)
         try:
-            ready = repository.is_ready()
-        except RepositoryUnavailable:
-            ready = False
-        if not ready:
-            return _error(
-                503,
-                "mart_not_ready",
-                "The governed delivery mart is not ready",
+            repository_readiness = repository.get_readiness()
+        except (MartIntegrityError, RepositoryUnavailable):
+            repository_readiness = RepositoryReadiness(
+                backend=settings.repository_backend,
+                ready=False,
+                reason="repository_unavailable",
             )
-        return HealthResponse(status="ready")
+
+        if settings.demo_mode:
+            identity_check = OperationalCheckResponse(
+                status="warning",
+                message=(
+                    "The local demo identity adapter is enabled; it is not "
+                    "production authentication"
+                ),
+            )
+            identity_ready = True
+        else:
+            identity_check = OperationalCheckResponse(
+                status="fail",
+                message="No production identity provider is configured",
+            )
+            identity_ready = False
+
+        repository_failed = repository_readiness.reason in {
+            "repository_unavailable",
+            "integrity_check_failed",
+        }
+        repository_check = OperationalCheckResponse(
+            status="fail" if repository_failed else "pass",
+            message=(
+                "The serving repository could not complete its bounded checks"
+                if repository_failed
+                else "The serving repository completed its bounded checks"
+            ),
+        )
+
+        has_count_evidence = (
+            repository_readiness.expected_current_row_count is not None
+            and repository_readiness.actual_current_row_count is not None
+            and repository_readiness.expected_history_row_count is not None
+            and repository_readiness.actual_history_row_count is not None
+        )
+        if not has_count_evidence:
+            row_count_check = OperationalCheckResponse(
+                status="disabled",
+                message="This repository backend does not publish serving-copy counts",
+            )
+        elif repository_readiness.reason == "row_count_mismatch":
+            row_count_check = OperationalCheckResponse(
+                status="fail",
+                message="Published and stored serving row counts do not match",
+            )
+        else:
+            row_count_check = OperationalCheckResponse(
+                status="pass",
+                message="Published and stored serving row counts match",
+            )
+
+        published_at = repository_readiness.data_published_at_utc
+        publication_age_seconds: int | None = None
+        freshness_ready = True
+        if published_at is not None and (
+            published_at.tzinfo is None or published_at.utcoffset() is None
+        ):
+            freshness_check = OperationalCheckResponse(
+                status="fail",
+                message="The publication timestamp is not timezone-aware",
+            )
+            freshness_ready = False
+            published_at = None
+        elif settings.maximum_publication_age_seconds == 0:
+            freshness_check = OperationalCheckResponse(
+                status="disabled",
+                message="No maximum publication age is configured",
+            )
+        elif published_at is None:
+            freshness_check = OperationalCheckResponse(
+                status="fail",
+                message="Publication freshness cannot be proved",
+            )
+            freshness_ready = False
+        else:
+            published_at = published_at.astimezone(UTC)
+            publication_age_seconds = int((checked_at - published_at).total_seconds())
+            if publication_age_seconds < 0:
+                publication_age_seconds = 0
+                freshness_check = OperationalCheckResponse(
+                    status="fail",
+                    message="The publication timestamp is in the future",
+                )
+                freshness_ready = False
+            elif (
+                publication_age_seconds > settings.maximum_publication_age_seconds
+            ):
+                freshness_check = OperationalCheckResponse(
+                    status="fail",
+                    message="The latest serving publication is too old",
+                )
+                freshness_ready = False
+            else:
+                freshness_check = OperationalCheckResponse(
+                    status="pass",
+                    message="The latest serving publication is within the age limit",
+                )
+
+        ready = repository_readiness.ready and freshness_ready and identity_ready
+        response = ReadinessResponse(
+            status="ready" if ready else "not_ready",
+            checked_at_utc=checked_at,
+            repository_backend=repository_readiness.backend,
+            checks={
+                "identity_provider": identity_check,
+                "serving_repository": repository_check,
+                "serving_row_counts": row_count_check,
+                "publication_freshness": freshness_check,
+            },
+            data_version=repository_readiness.data_version,
+            data_published_at_utc=published_at,
+            publication_age_seconds=publication_age_seconds,
+            maximum_publication_age_seconds=(
+                settings.maximum_publication_age_seconds or None
+            ),
+            expected_current_row_count=(
+                repository_readiness.expected_current_row_count
+            ),
+            actual_current_row_count=repository_readiness.actual_current_row_count,
+            expected_history_row_count=(
+                repository_readiness.expected_history_row_count
+            ),
+            actual_history_row_count=repository_readiness.actual_history_row_count,
+        )
+        if not ready:
+            return JSONResponse(status_code=503, content=response.model_dump(mode="json"))
+        return response
+
+    @app.get("/health/metrics", response_model=OperationalMetricsResponse)
+    def health_metrics() -> OperationalMetricsResponse:
+        snapshot = app.state.request_metrics.snapshot()
+        return OperationalMetricsResponse(**asdict(snapshot))
 
     @app.get(
         "/api/v1/context",

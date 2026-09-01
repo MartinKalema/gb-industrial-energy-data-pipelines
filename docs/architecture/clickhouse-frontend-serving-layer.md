@@ -42,6 +42,10 @@ publish_tested_dimensional_mart_to_clickhouse
           v
 ClickHouse native MergeTree tables      rebuildable frontend copy
           |
+          | keep newest ready versions; remove older/incomplete copies
+          v
+remove_old_clickhouse_serving_versions  serialized maintenance
+          |
           | read-only, tenant-scoped queries
           v
 FastAPI -> Next.js -> browser
@@ -110,10 +114,13 @@ This final-marker rule gives the workflow its failure behavior:
 | A marker remains but its serving rows are damaged | The retry builds and validates a fresh publication instead of trusting the damaged version. |
 | A persisted table no longer matches the supported schema | Publication stops with a migration/rebuild error before copying data. |
 | Any new publication fails | The API continues serving the previous ready version. |
+| Retention cleanup fails after publication | The validated version remains visible, but the Airflow run stays failed until only the cleanup task is repaired and retried. |
 
-Candidate rows are immutable. A later cleanup task may remove unmarked attempts
-and old ready versions after a retention policy is accepted; cleanup is not part
-of publication correctness.
+Candidate rows are immutable during publication. The separate retention task
+never deletes the newest two ready versions, removes an old ready marker before
+its rows, and removes unmarked failed attempts only while holding the same
+one-slot writer pool. Cleanup remains separate from publication correctness; see
+the [serving retention and recovery runbook](../operations/clickhouse-serving-retention-and-recovery.md).
 
 ## Consistent API reads
 
@@ -143,7 +150,7 @@ The local runtime uses three different ClickHouse accounts:
 | Account | Credential | Responsibility |
 |---|---|---|
 | `clickhouse_bootstrap` | `CLICKHOUSE_BOOTSTRAP_PASSWORD` | Starts the local database and reconciles the two workload accounts. It is not passed to Airflow or the API. |
-| `industrial_energy_publisher` | `CLICKHOUSE_PUBLISHER_PASSWORD` | Used only by Airflow to create, read, and insert the serving tables and ready marker. |
+| `industrial_energy_publisher` | `CLICKHOUSE_PUBLISHER_PASSWORD` | Used only by Airflow to create, read, insert, and run controlled retention deletes on the serving tables. |
 | `historical_delivery_api` | `CLICKHOUSE_API_PASSWORD` | Used only by FastAPI. It has `SELECT` access to the serving database and ClickHouse's read-only setting. |
 
 Put three different high-entropy values in the ignored root `.env`. Never put
@@ -163,7 +170,8 @@ For a new or empty serving database:
 
 3. Trigger `steam_delivery_data_pipeline` in Airflow.
 4. Confirm both `test_complete_dimensional_mart_with_dbt` and
-   `publish_tested_dimensional_mart_to_clickhouse` succeeded.
+   `publish_tested_dimensional_mart_to_clickhouse` succeeded, and confirm the
+   final `remove_old_clickhouse_serving_versions` maintenance task completed.
 5. Start the product profile:
 
    ```bash
@@ -172,8 +180,12 @@ For a new or empty serving database:
    ```
 
 The product profile starts ClickHouse, the read-only API, and the web product;
-it does not start Trino. If no ready marker exists, the API process can be live
-but its readiness check correctly fails.
+it does not start Trino. A ready publication must exist and be younger than the
+configured 30-hour limit. If it does not, the API process can be live but its
+readiness check fails and Compose does not start the web service. For an
+intentionally static historical demonstration only, explicitly set
+`PRODUCT_MAX_PUBLICATION_AGE_SECONDS=0`; do not use that as a production
+default.
 
 ## Verification evidence
 
@@ -189,11 +201,13 @@ validation failures do not replace the last good version.
 |---|---|---|
 | Rebuildable ClickHouse copy | Fast product reads without changing the canonical lakehouse | One more local service and a publication boundary to operate |
 | Native `MergeTree` tables | Predictable interactive reads over product-shaped columns | Data is duplicated from the canonical mart |
-| Immutable version plus final marker | Failed releases remain invisible and page requests can be pinned | Old candidates and versions need a later retention policy |
+| Immutable version plus final marker | Failed releases remain invisible and page requests can be pinned | Retention needs a serialized marker-first cleanup |
 | Full snapshot publication first | Easy to reason about, compare, retry, and rebuild | Later data growth may justify incremental publication |
 | Tenant checks in FastAPI and every query | Keeps authorization server-side and testable | ClickHouse is not currently the policy authority by itself |
 
-Incremental publication, old-version cleanup, production identity, and managed
-ClickHouse are future decisions. They do not change the current rule: R2 and
-Iceberg are canonical, dbt owns business definitions, and only a fully validated
-ClickHouse publication is visible to the product.
+Incremental publication, production identity, and managed ClickHouse are future
+decisions. Count-based serving cleanup protects the current and previous ready
+versions when both exist; a longer time-based client-retention promise still needs a production
+policy. These decisions do not change the current rule: R2 and Iceberg are
+canonical, dbt owns business definitions, and only a fully validated ClickHouse
+publication is visible to the product.

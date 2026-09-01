@@ -52,7 +52,7 @@ def test_clickhouse_publication_task_has_clear_name_pool_and_bounded_execution()
     assert ast.unparse(keywords["retry_delay"]) == "timedelta(minutes=1)"
 
 
-def test_clickhouse_publication_receives_final_dbt_test_and_is_last_dependency() -> (
+def test_clickhouse_publication_receives_final_dbt_test_before_retention() -> (
     None
 ):
     pipeline = _pipeline_function()
@@ -82,5 +82,38 @@ def test_clickhouse_publication_receives_final_dbt_test_and_is_last_dependency()
         and ">>" in ast.unparse(node.value)
     )
     dependency_text = ast.unparse(dependency_expression.value)
-    assert dependency_text.endswith(">> clickhouse_publication")
+    assert dependency_text.endswith(">> clickhouse_publication >> serving_retention")
     assert "test_complete_mart >> clickhouse_publication" in dependency_text
+
+
+def test_serving_retention_has_clear_name_pool_and_runs_after_publication() -> None:
+    function = _task_function("remove_old_clickhouse_serving_versions")
+    decorator = next(
+        item
+        for item in function.decorator_list
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "task"
+    )
+    keywords = {keyword.arg: keyword.value for keyword in decorator.keywords}
+
+    assert ast.literal_eval(keywords["task_id"]) == (
+        "remove_old_clickhouse_serving_versions"
+    )
+    assert ast.literal_eval(keywords["pool"]) == "iceberg_writer"
+    assert ast.literal_eval(keywords["pool_slots"]) == 1
+    assert ast.literal_eval(keywords["retries"]) == 2
+
+    pipeline = _pipeline_function()
+    assignment = next(
+        node
+        for node in pipeline.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "serving_retention"
+            for target in node.targets
+        )
+    )
+    assert ast.unparse(assignment.value) == (
+        "remove_old_clickhouse_serving_versions(clickhouse_publication)"
+    )

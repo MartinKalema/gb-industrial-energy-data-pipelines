@@ -20,8 +20,10 @@ source data from generation to original files in R2, row checks with failures
 saved separately, typed Iceberg source tables, final count reconciliation, and
 a queryable successful-run coverage declaration. Six smaller dbt tasks then
 prepare and test the loaded data and calculations, build the dimensional
-tables, and test the complete mart through local Trino. A final publication
-task copies that tested mart to the ClickHouse database used by the frontend.
+tables, and test the complete mart through local Trino. A publication task
+copies that tested mart to the ClickHouse database used by the frontend. A
+separate maintenance task then keeps the newest serving versions and removes
+older or incomplete ClickHouse copies.
 
 The task order is:
 
@@ -40,6 +42,7 @@ validate_run_parameters
   -> build_dimension_tables_with_dbt
   -> test_complete_dimensional_mart_with_dbt
   -> publish_tested_dimensional_mart_to_clickhouse
+  -> remove_old_clickhouse_serving_versions
 ```
 
 Each name says what the operator should expect:
@@ -60,6 +63,7 @@ Each name says what the operator should expect:
 | `build_dimension_tables_with_dbt` | The 13 physical dimension and revision-audit tables are ready. |
 | `test_complete_dimensional_mart_with_dbt` | All 70 final mart and reconciliation checks passed. |
 | `publish_tested_dimensional_mart_to_clickhouse` | A validated, versioned copy of the tested current and history marts is ready for the frontend. |
+| `remove_old_clickhouse_serving_versions` | The new publication is retained, the newest two ready versions are protected when they exist, and older or incomplete ClickHouse copies have been removed. |
 
 Each task exchanges only a small JSON summary through XCom. Records and bulk
 files do not pass through the Airflow metadata database.
@@ -94,13 +98,17 @@ separate folder for each task and attempt, and return only compact result counts
 through XCom. If a task fails, Airflow retries only that task. Earlier
 successful dbt tasks stay successful and their relations remain available.
 This applies to a retry or task clear inside the same Airflow run. Triggering a
-brand-new DAG run intentionally starts the 14-task sequence again, with the
+brand-new DAG run intentionally starts the 15-task sequence again, with the
 source layers safely reusing identical evidence and rows.
 
 A successful coverage row proves the source load reconciled. The dimensional
 mart is ready only when `test_complete_dimensional_mart_with_dbt` succeeds. The
 frontend serving copy is ready only when
 `publish_tested_dimensional_mart_to_clickhouse` then succeeds.
+The cleanup task does not make data visible. If it fails after publication,
+the new version remains available and cleanup can be retried without rerunning
+the source or dbt tasks. The complete Airflow run remains failed until that
+maintenance task succeeds.
 
 The publication task reads only the tested Trino mart projections. It writes
 current and history rows under a new ClickHouse `load_attempt_id`, reads them
@@ -122,8 +130,9 @@ the cleanup, Airflow disables the automatic retry so a new writer cannot
 overlap an uncertain old one. The whole run has a bounded practical ceiling of
 180 minutes. A dbt retry happens only if enough DAG-run time remains; the
 180-minute limit does not guarantee a complete second attempt. The ClickHouse
-publication task has a 20-minute limit and up to two retries after one minute;
-its marker-gated writes make those retries safe. The DAG parameters are:
+publication and cleanup tasks each have a 20-minute limit and up to two retries
+after one minute; marker-gated publication and marker-first cleanup make those
+retries safe. The DAG parameters are:
 
 - `start_date`: first operating date, inclusive;
 - `end_date`: last operating date, inclusive and no earlier than the start;
@@ -145,9 +154,41 @@ Airflow run is rejected because it would create a discontinuous meter timeline.
 The generator now represents one continuous synthetic timeline beginning on
 the `2026-08-26` Europe/London operating date. Daily ranges and combined
 backfills compose to the same rows, including the shared cumulative-meter
-boundary. If recurring growth is accepted later, add a separate daily DAG that
-derives a completed operating date from its Airflow data interval and calls the
-same workflow; keep this DAG manual for replays and backfills.
+boundary. Recurring growth now uses the separate daily DAG described below;
+this DAG stays manual for controlled replays and backfills.
+
+## Daily schedule and freshness contract
+
+`daily_steam_delivery_data_pipeline` is the separate scheduled entry point. It
+does not copy or replace the manual pipeline above. At **12:00
+Europe/London** each day it chooses the previous completed London operating
+date, passes that one-day request to `steam_delivery_data_pipeline`, and waits
+for the complete 15-task child run, including ClickHouse publication and
+serving-retention cleanup, to succeed.
+
+The schedule uses Airflow's resolved `data_interval_start` and
+`data_interval_end`, not the task's wall clock or the old `execution_date`
+name. Its noon-to-noon interval can contain 23, 24, or 25 real hours when the UK
+clock changes. The code therefore uses the two London calendar dates and still
+chooses exactly one operating day.
+
+The freshness contract is:
+
+| Promise | Rule |
+|---|---|
+| Source allowance | The current synthetic sources can publish a correction on the following morning. Noon is after the latest generated publication, including the UK clock-change fixtures. If a future generator publishes later, its existing generation-time check fails safely instead of loading evidence from the future. |
+| Scheduled coverage | A run scheduled at noon on day D+1 covers London operating date D. |
+| Ready result | The existing manual DAG must finish all validation, reconciliation, dbt tests, ClickHouse publication, and serving-retention cleanup. |
+| Freshness deadline | The complete child workflow for D must finish by **16:00 Europe/London on D+1**. The final daily task checks the wall-clock time after the child succeeds and fails after that time so the breach is visible in Airflow. This is not a direct measurement of the ready marker's timestamp. |
+| Missed scheduler days | `catchup=False` prevents a restarted laptop from silently launching many expensive historical runs. Use the manual DAG for an explicit missing-date backfill. |
+| Manual trigger | The daily DAG rejects manual runs because Airflow 3 does not guarantee that a manually triggered run's data interval represents the requested date. Use the manual DAG instead. |
+
+The daily wrapper uses a stable child run ID and deterministic generation time
+derived from the schedule boundary. It does not reset or skip an existing child
+run. If an operator clears the wrapper after the child already exists, Airflow
+will report that conflict rather than silently treating an unknown child state
+as success. Inspect or repair the existing `steam_delivery_data_pipeline` run
+directly.
 
 Iceberg does not enforce a unique source-revision identity. This DAG's
 `max_active_runs=1` setting serializes its runs, and the load task uses the
@@ -198,6 +239,14 @@ publication version, whether it was created or reused, current/history counts,
 hashes, date coverage, and publication time. If only this task fails, repair
 the ClickHouse problem and retry this task; do not restart the successful source
 and dbt work.
+
+The final `remove_old_clickhouse_serving_versions` task never deletes the
+newest two ready versions and removes older ready markers before their rows. A
+first publication naturally has only one ready version. It
+also removes incomplete attempts that never received a ready marker. It runs in
+the same one-slot writer pool as publication, so it cannot mistake an active
+publication for an abandoned one. If only cleanup fails, retry only cleanup;
+the newly published version is already visible.
 
 The complete object layout, validation rules, lineage columns, failure
 recovery, and scale trade-offs are documented in the

@@ -23,7 +23,7 @@ clickhouse-client \
         ALTER USER industrial_energy_publisher
             IDENTIFIED WITH sha256_password BY {publisher_password:String};
         REVOKE ALL ON *.* FROM industrial_energy_publisher;
-        GRANT CREATE TABLE, SELECT, INSERT
+        GRANT CREATE TABLE, SELECT, INSERT, ALTER DELETE
             ON industrial_energy_serving.* TO industrial_energy_publisher;
 
         CREATE USER IF NOT EXISTS historical_delivery_api

@@ -93,6 +93,10 @@ remote.
 - `docs/discovery/` — business problem, source feasibility, scope, and requirements
 - `docs/modeling/` — our collaborative dimensional-modeling workshop and decisions
 - `docs/architecture/` — system design and job-capability coverage
+- `docs/operations/` — health, alert, capacity-evidence, and recovery runbooks;
+  see the [daily publication ADR](docs/architecture/adr-003-daily-publication-and-serving-operations.md),
+  [API readiness guide](docs/operations/api-production-readiness.md), and
+  [ClickHouse retention and recovery guide](docs/operations/clickhouse-serving-retention-and-recovery.md)
 - `ingestion/batch/` — historical API ingestion and replay/backfill logic
 - `ingestion/stream/` — IRIS bridge, telemetry producer, and stream processing
 - `orchestration/` — Airflow DAGs for finite workflows and maintenance
@@ -118,8 +122,10 @@ The final dbt checkpoint,
 as product-ready data. Airflow then runs
 `publish_tested_dimensional_mart_to_clickhouse`. That task copies the tested
 current and history datasets into a new ClickHouse version, validates the copy,
-and makes it visible only after all checks pass. After one publication succeeds,
-start the local product profile:
+and makes it visible only after all checks pass. Start the local product profile
+after a ready publication exists and is younger than the configured 30-hour
+limit. For an intentionally static historical demonstration only, explicitly
+set `PRODUCT_MAX_PUBLICATION_AGE_SECONDS=0` before starting it:
 
 ```bash
 docker compose --project-directory . -f infrastructure/compose.yaml \
@@ -173,7 +179,7 @@ complete contract and local run instructions.
 | Source contracts | PSC-001 through PSC-011 accepted; 12 Draft 2020-12 schemas implemented |
 | Synthetic evidence | Nine deterministic, revisioned JSONL sources implemented and contract-tested |
 | Bounded source pipeline | Verified 2026-08-28: 313 inserted on the first real run, then 313 exact replays with no conflicts |
-| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt-to-ClickHouse orchestration, and the focused historical product are implemented; FUELHH remains |
+| Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt-to-ClickHouse orchestration, daily scheduling, freshness/readiness checks, serving retention/recovery, and the focused historical product are implemented; FUELHH remains |
 | Historical product API | Implemented: read-only, tenant-scoped FastAPI over ready ClickHouse versions sourced from governed current/history marts |
 | Historical web product | Implemented: server-rendered commercial/customer investigation and revision history |
 | Frontend serving database | Implemented: versioned native ClickHouse copy published only after the final dbt tests |
