@@ -38,6 +38,8 @@ here.
                                       |
                           ClickHouse serving versions
                                       |
+                       serialized retention cleanup
+                                      |
                            tenant-scoped FastAPI
                                       |
                               Next.js/TypeScript
@@ -55,7 +57,7 @@ here.
 | Trino | Interactive and dbt SQL over Iceberg | Stream ingestion |
 | dbt | Transformation DAG, tests, contracts, documentation, governed metrics | Continuous event processing |
 | ClickHouse | Rebuildable, versioned native tables for fast frontend reads | Canonical evidence, Iceberg ownership, or business-metric definitions |
-| PostgreSQL | Local Airflow metadata and application state | Iceberg catalog state or analytical telemetry history |
+| SQLite | Local standalone Airflow metadata and task history | Iceberg catalog state, canonical evidence, or analytical telemetry history |
 | FastAPI | Authorization, product contracts, ready-version selection, governed tool calls | Arbitrary user SQL or canonical data storage |
 | Next.js | Role-specific product experience | Security enforcement by itself |
 
@@ -84,7 +86,9 @@ Raw retention makes revised market publications, meter corrections, and stream-g
    `load_attempt_id`, validates the copy, and inserts its ready marker last.
 7. A failed publication stays invisible and the API continues serving the
    previous good version. An exact retry reuses the ready version.
-8. The high-water mark advances only after durable writes and required checks succeed.
+8. A serialized cleanup task protects the newest two ready versions when they
+   exist and removes older or incomplete ClickHouse copies.
+9. The high-water mark advances only after durable writes and required checks succeed.
 
 ## Streaming flow
 
@@ -160,10 +164,15 @@ Cloudflare documents that R2 Data Catalog exposes the Iceberg REST interface at 
 - Airflow retries only idempotent tasks and exposes failed data intervals.
 - ClickHouse candidate rows are visible only after exact validation and a final
   ready marker. A failed attempt cannot replace the previous ready version.
+- Airflow then protects the new version and removes older ready versions and
+  invisible failed attempts through the same one-slot writer pool.
 - Product requests join rows to that ready marker and apply tenant scope before
   optional filters. A page pins its requests to one returned data version.
 - Select exactly one owner for snapshot expiration and compaction. If R2 Data Catalog maintenance is enabled, Airflow observes it and does not run conflicting rewrites.
-- Health checks cover API reachability, IRIS connection age, broker lag, last Iceberg commit, dbt freshness, and product API status.
+- Implemented checks cover ClickHouse health, API liveness, serving-copy
+  integrity, publication age, identity mode, and product readiness. IRIS age,
+  broker lag, Iceberg commit age, and dbt freshness monitoring remain Phase 3
+  work.
 
 ## Local resource strategy
 
@@ -186,7 +195,7 @@ Spark/Trino remain out until their operational need is measured.
 | Iceberg | Open multi-engine tables, snapshots, evolution, streaming/batch convergence | Catalog and table maintenance are additional systems |
 | Trino for dbt | Clear SQL path and good portfolio explanation | Not the stream processor |
 | ClickHouse for frontend serving | About 0.02-second local API calls over versioned native tables | Duplicates tested product data and adds a release step |
-| Ready marker written last | Partial or invalid candidates stay invisible | Old candidates require later cleanup |
+| Ready marker written last | Partial or invalid candidates stay invisible | Cleanup must be serialized and remove markers before rows |
 | Spark as the only stream processor | One owner for event-time state, checkpoints, deduplication, and Iceberg stream commits | Additional JVM/container footprint |
 | Redpanda single node | Kafka semantics with lighter local operations | Not representative of broker high availability |
 | Synthetic plant data | Reproducible edge cases and legal clarity | Must be labelled; cannot prove real plant integration |
@@ -195,7 +204,8 @@ Spark/Trino remain out until their operational need is measured.
 ## Revisit as the system grows
 
 - R2 Data Catalog beta suitability and authentication after the smoke test
-- Incremental ClickHouse publication and old-version retention after data growth
+- Incremental ClickHouse publication after data growth; revisit whether the
+  current two-ready-version minimum needs a time-based client promise
 - Spark sizing and tuning once event volume is measured; replacing it requires a new ADR
 - Multi-tenant policy enforcement below the API layer
 - Semantic layer choice after the first metrics are stable

@@ -61,6 +61,21 @@ class ContextResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RepositoryReadiness:
+    """Small, value-safe evidence used by the operational readiness endpoint."""
+
+    backend: str
+    ready: bool
+    reason: str
+    data_version: str | None = None
+    data_published_at_utc: datetime | None = None
+    expected_current_row_count: int | None = None
+    actual_current_row_count: int | None = None
+    expected_history_row_count: int | None = None
+    actual_history_row_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SummaryAggregate:
     interval_count: int
     expected_interval_count: int
@@ -85,6 +100,8 @@ class SummaryAggregate:
 
 
 class DeliveryPerformanceRepository(Protocol):
+    def get_readiness(self) -> RepositoryReadiness: ...
+
     def is_ready(self) -> bool: ...
 
     def get_context(
@@ -282,17 +299,31 @@ class TrinoDeliveryPerformanceRepository:
             raise MartIntegrityError("Expected exactly one aggregate row")
         return rows[0]
 
-    def is_ready(self) -> bool:
+    def get_readiness(self) -> RepositoryReadiness:
         # An intentionally empty mart is still ready, so success must depend on
         # whether the core fact and its authorization dimension can be queried,
         # not on either relation returning a data row. Each query reads at most
         # one row and therefore remains a bounded readiness probe.
-        for relation_name in ("current_fact", "customer"):
-            relation = self._relations[relation_name]
-            self._fetch_all(
-                f"SELECT 1 AS relation_is_queryable FROM {relation} LIMIT 1", []
+        try:
+            for relation_name in ("current_fact", "customer"):
+                relation = self._relations[relation_name]
+                self._fetch_all(
+                    f"SELECT 1 AS relation_is_queryable FROM {relation} LIMIT 1", []
+                )
+        except RepositoryUnavailable:
+            return RepositoryReadiness(
+                backend="trino",
+                ready=False,
+                reason="repository_unavailable",
             )
-        return True
+        return RepositoryReadiness(
+            backend="trino",
+            ready=True,
+            reason="queryable_relations",
+        )
+
+    def is_ready(self) -> bool:
+        return self.get_readiness().ready
 
     def get_context(
         self, actor: Actor, *, data_version: str | None = None

@@ -16,6 +16,7 @@ from apps.api.repository import (
     ContextResult,
     ContextRow,
     QueryScope,
+    RepositoryReadiness,
     RepositoryUnavailable,
     SummaryAggregate,
     TrinoDeliveryPerformanceRepository,
@@ -140,6 +141,7 @@ def history_row(position: int) -> dict[str, Any]:
 class FakeRepository:
     def __init__(self) -> None:
         self.ready: bool | Exception = True
+        self.readiness_override: RepositoryReadiness | None = None
         self.summary_value = complete_summary()
         self.interval_rows = [
             interval_row(key=INTERVAL_KEY, committed=None),
@@ -152,6 +154,17 @@ class FakeRepository:
         if isinstance(self.ready, Exception):
             raise self.ready
         return self.ready
+
+    def get_readiness(self) -> RepositoryReadiness:
+        if isinstance(self.ready, Exception):
+            raise self.ready
+        if self.readiness_override is not None:
+            return self.readiness_override
+        return RepositoryReadiness(
+            backend="trino",
+            ready=self.ready,
+            reason="queryable_relations" if self.ready else "repository_unavailable",
+        )
 
     def get_context(
         self, actor: Actor, *, data_version: str | None = None
@@ -241,17 +254,122 @@ def test_liveness_does_not_require_identity(client: TestClient) -> None:
 def test_readiness_distinguishes_ready_and_unavailable(
     client: TestClient, repository: FakeRepository
 ) -> None:
-    assert client.get("/health/ready").json() == {"status": "ready"}
+    ready = client.get("/health/ready")
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ready"
+    assert ready.json()["checks"]["identity_provider"]["status"] == "warning"
+    assert ready.json()["checks"]["serving_repository"]["status"] == "pass"
 
     repository.ready = False
     response = client.get("/health/ready")
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "mart_not_ready"
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["serving_repository"]["status"] == "fail"
 
     repository.ready = RepositoryUnavailable("secret connection detail")
     response = client.get("/health/ready")
     assert response.status_code == 503
     assert "secret" not in response.text
+
+
+def test_readiness_fails_when_clickhouse_publication_is_stale(
+    repository: FakeRepository,
+) -> None:
+    repository.readiness_override = RepositoryReadiness(
+        backend="clickhouse",
+        ready=True,
+        reason="ready",
+        data_version=f"publication-{'a' * 32}",
+        data_published_at_utc=datetime(2026, 8, 29, 8, 0, tzinfo=UTC),
+        expected_current_row_count=96,
+        actual_current_row_count=96,
+        expected_history_row_count=558,
+        actual_history_row_count=558,
+    )
+    app = create_app(
+        settings=Settings(
+            demo_mode=True,
+            repository_backend="clickhouse",
+            clickhouse_password="unit-test-password",
+            maximum_publication_age_seconds=3_600,
+        ),
+        repository=repository,
+        clock=lambda: datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+    )
+    response = TestClient(app, raise_server_exceptions=False).get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["publication_age_seconds"] == 7_200
+    assert response.json()["checks"]["publication_freshness"] == {
+        "status": "fail",
+        "message": "The latest serving publication is too old",
+    }
+    assert response.json()["checks"]["serving_row_counts"]["status"] == "pass"
+
+
+def test_readiness_reports_fresh_publication_evidence(
+    repository: FakeRepository,
+) -> None:
+    repository.readiness_override = RepositoryReadiness(
+        backend="clickhouse",
+        ready=True,
+        reason="ready",
+        data_version=f"publication-{'a' * 32}",
+        data_published_at_utc=datetime(2026, 8, 29, 9, 30, tzinfo=UTC),
+        expected_current_row_count=96,
+        actual_current_row_count=96,
+        expected_history_row_count=558,
+        actual_history_row_count=558,
+    )
+    app = create_app(
+        settings=Settings(
+            demo_mode=True,
+            repository_backend="clickhouse",
+            clickhouse_password="unit-test-password",
+            maximum_publication_age_seconds=3_600,
+        ),
+        repository=repository,
+        clock=lambda: datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
+    )
+    response = TestClient(app, raise_server_exceptions=False).get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["publication_age_seconds"] == 1_800
+    assert response.json()["expected_current_row_count"] == 96
+    assert response.json()["actual_history_row_count"] == 558
+
+
+def test_readiness_exposes_missing_production_identity_provider(
+    repository: FakeRepository,
+) -> None:
+    app = create_app(settings=Settings(demo_mode=False), repository=repository)
+    response = TestClient(app, raise_server_exceptions=False).get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["identity_provider"] == {
+        "status": "fail",
+        "message": "No production identity provider is configured",
+    }
+
+
+def test_process_metrics_are_bounded_and_do_not_contain_business_values(
+    client: TestClient,
+) -> None:
+    client.get("/health/live")
+    client.get("/missing-route")
+    response = client.get("/health/metrics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["completed_request_count"] >= 2
+    assert payload["response_4xx_count"] >= 1
+    assert payload["response_5xx_count"] == 0
+    assert payload["in_flight_requests"] == 1
+    assert "customer" not in response.text.lower()
 
 
 def test_container_readiness_deadline_covers_both_bounded_queries() -> None:
@@ -260,7 +378,25 @@ def test_container_readiness_deadline_covers_both_bounded_queries() -> None:
     ).read_text(encoding="utf-8")
 
     assert "--timeout=135s" in dockerfile
-    assert "timeout=130" in dockerfile
+    assert '"apps.api.operational_check"' in dockerfile
+    assert '"--timeout-seconds", "130"' in dockerfile
+
+
+def test_compose_enables_daily_publication_age_backstop() -> None:
+    compose = (
+        Path(__file__).resolve().parents[2] / "infrastructure" / "compose.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "PRODUCT_MAX_PUBLICATION_AGE_SECONDS: "
+        "${PRODUCT_MAX_PUBLICATION_AGE_SECONDS:-108000}"
+    ) in compose
+    assert "condition: service_healthy" in compose
+
+
+def test_publication_age_setting_rejects_negative_values() -> None:
+    with pytest.raises(ValueError, match="maximum_publication_age_seconds"):
+        Settings(maximum_publication_age_seconds=-1)
 
 
 def test_repository_readiness_accepts_queryable_empty_mart() -> None:

@@ -43,7 +43,8 @@ transformations and tests.
 - Missing governed measures remain `null`; neither the API nor UI converts them
   to zero.
 - Health checks distinguish a live process from readiness to query a complete,
-  marked ClickHouse publication.
+  recent ClickHouse publication. Readiness checks identity mode, repository
+  access, ready-marker row-count integrity, and configured publication age.
 - Request logs carry a request ID, actor, authorized scope, route, outcome, and
   duration without logging contract values or credentials.
 
@@ -121,7 +122,8 @@ for the table and release contract.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health/live` | Confirm that the API process is running. |
-| `GET /health/ready` | Confirm that the latest ready publication exists and its marked row counts are present. |
+| `GET /health/ready` | Confirm identity mode, repository access, ready-marker row-count integrity, and configured publication age. |
+| `GET /health/metrics` | Return bounded process-local uptime, request-count, error-count, and duration evidence. |
 | `GET /api/v1/context` | Return the actor, authorized customers/sites, available date boundary, data version, and publication time. |
 | `GET /api/v1/delivery-performance/summary` | Return governed totals, completeness, official percentages, result states, and freshness for a bounded scope. |
 | `GET /api/v1/delivery-performance/intervals` | Return a stable page of half-hour facts and their individual states. |
@@ -166,7 +168,8 @@ and negative tests remain at the API boundary.
 ## Reliability and observability
 
 - Compose starts the API only after ClickHouse is healthy. The API readiness
-  endpoint stays false until a complete ready publication can be verified.
+  endpoint stays false until identity mode, repository access, row-count
+  integrity, and publication age meet the configured contract.
 - Airflow runs `publish_tested_dimensional_mart_to_clickhouse` only after
   `test_complete_dimensional_mart_with_dbt` succeeds.
 - Candidate current and history rows carry a new `load_attempt_id`. They remain
@@ -200,7 +203,7 @@ local project environment and are not general engine benchmarks.
 | Decision | Benefit | Cost or limitation |
 |---|---|---|
 | Publish native ClickHouse serving tables | Local API calls are fast and do not wait for R2 metadata, Trino planning, or object downloads | The tested mart is duplicated into a rebuildable serving copy |
-| Use immutable candidates and a final ready marker | A failed publication is invisible and the previous version remains usable | Old candidates and versions require a later retention policy |
+| Use immutable candidates and a final ready marker | A failed publication is invisible and the previous version remains usable | Cleanup must share the writer pool and remove markers before rows |
 | Pin one page to `X-Product-Data-Version` | Concurrent publication cannot mix versions within one page | The API must retain a requested ready version while clients may still use it |
 | Server-render the first web workflow | Keeps data access on the server and makes empty/error states deterministic | Rich live interaction will need client components later |
 | Keep aggregate presentation in the typed API | Dashboard, later AI tools, and exports can share one contract | The API query contract must be regression-tested with dbt fixtures |
@@ -213,8 +216,9 @@ local project environment and are not general engine benchmarks.
 - Add verified OIDC identities and policy-managed scopes before deployment.
 - Add a short-lived cache only after measuring repeated ClickHouse query latency and
   defining correction invalidation behavior.
-- Add incremental publication and old-version cleanup only when measured data
-  growth justifies their additional state and recovery logic.
+- Add incremental publication only when measured data growth justifies its
+  additional state and recovery logic. Revisit whether the current two-ready-
+  version minimum needs a longer time-based client promise.
 - Move widely reused aggregate queries into dedicated dbt presentation models
   if another consumer needs direct SQL rather than the typed product API.
 - Add live operator views only after the Spark streaming slice has event-time,

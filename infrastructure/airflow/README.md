@@ -22,6 +22,7 @@ airflow:
     AIRFLOW__API__HOST: 0.0.0.0
     AIRFLOW__API__PORT: 8080
     AIRFLOW__CORE__DAGS_FOLDER: /opt/industrial-energy/orchestration/dags
+    AIRFLOW__CORE__DAG_RUN_CONF_OVERRIDES_PARAMS: "True"
     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     AIRFLOW__CORE__PARALLELISM: "2"
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "False"
@@ -44,6 +45,7 @@ airflow:
     CLICKHOUSE_DATABASE: industrial_energy_serving
     CLICKHOUSE_PUBLISHER_USER: industrial_energy_publisher
     CLICKHOUSE_PUBLISHER_PASSWORD: ${CLICKHOUSE_PUBLISHER_PASSWORD:?CLICKHOUSE_PUBLISHER_PASSWORD is required}
+    CLICKHOUSE_READY_VERSIONS_TO_KEEP: ${CLICKHOUSE_READY_VERSIONS_TO_KEEP:-2}
     DBT_PROFILES_DIR: /opt/industrial-energy/transformations
     DBT_PROJECT_DIR: /opt/industrial-energy/transformations
     DBT_LOG_PATH: /opt/airflow/dbt/logs
@@ -90,8 +92,9 @@ volume. None of them belong in Git. The R2 values come from the ignored root
 
 The startup wrapper migrates the local metadata database and idempotently
 creates the one-slot `iceberg_writer` pool before Airflow starts. The source
-load, coverage publication, six dbt tasks, and ClickHouse publication task all
-use it. The publisher does not write Iceberg, but sharing the pool prevents
+load, coverage publication, six dbt tasks, ClickHouse publication, and serving
+cleanup tasks all use it. The publisher and cleanup task do not write Iceberg,
+but sharing the pool prevents
 another project writer from changing the tested mart while its separate Trino
 export queries run. The DAG's `max_active_runs=1` setting also serializes its
 runs. A standalone host-side dbt command is outside the pool and must not run
@@ -125,8 +128,9 @@ range on or after `2026-08-26`, the fixed project seed `20260828`, and a fixed
 UTC generation timestamp. Reuse the seed across dates; it identifies one
 continuous fictional meter timeline and is not a per-run random value.
 
-The Grid view shows 14 ordered tasks: seven source/control tasks followed by
-six dbt tasks and one ClickHouse publication task. The dbt sequence prepares
+The Grid view shows 15 ordered tasks: seven source/control tasks followed by
+six dbt tasks, one ClickHouse publication task, and one serving-retention task.
+The dbt sequence prepares
 and tests loaded data (9 models and
 235 tests), prepares and tests delivery calculations (33 models and 8 tests),
 builds the current fact, builds the history fact, builds 13 dimension tables,
@@ -140,6 +144,11 @@ version visible only after validating it and writing the ready marker last.
 The task has a 20-minute limit and up to two retries after one minute. If it
 fails, retry only that task; the tested mart remains available for publication
 and the API keeps using the previous ready version.
+
+`remove_old_clickhouse_serving_versions` then retains at least the current and
+previous ready publications and removes older or incomplete serving rows. It
+uses the same one-slot writer pool. If it fails after publication, the new
+version remains visible; retry only the cleanup task.
 
 Each dbt task streams its own model or test output into its Airflow log and
 stores `run_results.json` plus `dbt.log` below `/opt/airflow/dbt` in a distinct

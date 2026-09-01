@@ -26,6 +26,7 @@ from ingestion.batch.pipeline.clickhouse_publisher import (
     ServingPublicationError,
     ServingPublisher,
     dbt_result_identity,
+    publisher_config_from_environment,
 )
 from ingestion.batch.pipeline.models import PipelineError
 from ingestion.batch.pipeline.workflow import (
@@ -41,6 +42,77 @@ def _config() -> PublisherConfig:
         clickhouse_user="publisher",
         clickhouse_password="test-only-password",
     )
+
+
+def test_publisher_config_builder_applies_shared_environment_contract() -> None:
+    config = publisher_config_from_environment(
+        {
+            "TRINO_URL": "http://ignored-trino:8080",
+            "TRINO_USER": "configured-trino-user",
+            "DBT_TRINO_CATALOG": "fallback_catalog",
+            "CLICKHOUSE_SOURCE_TRINO_CATALOG": "source_catalog",
+            "CLICKHOUSE_SOURCE_TRINO_SCHEMA": "source_schema",
+            "CLICKHOUSE_HOST": "serving-clickhouse",
+            "CLICKHOUSE_PORT": "8443",
+            "CLICKHOUSE_DATABASE": "serving_database",
+            "CLICKHOUSE_PUBLISHER_USER": "publisher",
+            "CLICKHOUSE_PUBLISHER_PASSWORD": "test-only-password",
+            "CLICKHOUSE_SECURE": "true",
+            "CLICKHOUSE_INSERT_BATCH_SIZE": "250",
+            "TRINO_HTTP_TIMEOUT_SECONDS": "12.5",
+            "TRINO_QUERY_TIMEOUT_SECONDS": "45",
+            "CLICKHOUSE_HTTP_TIMEOUT_SECONDS": "13.5",
+            "CLICKHOUSE_QUERY_TIMEOUT_SECONDS": "46",
+        },
+        trino_endpoint="http://bounded-plan-trino:8080",
+        default_trino_catalog="plan_catalog",
+    )
+
+    assert config.trino_endpoint == "http://bounded-plan-trino:8080"
+    assert config.trino_catalog == "source_catalog"
+    assert config.trino_schema == "source_schema"
+    assert config.trino_user == "configured-trino-user"
+    assert config.trino_timeout_seconds == 12.5
+    assert config.trino_query_timeout_seconds == 45
+    assert config.clickhouse_host == "serving-clickhouse"
+    assert config.clickhouse_port == 8443
+    assert config.clickhouse_database == "serving_database"
+    assert config.clickhouse_user == "publisher"
+    assert config.clickhouse_password == "test-only-password"
+    assert config.clickhouse_secure is True
+    assert config.clickhouse_timeout_seconds == 13.5
+    assert config.clickhouse_query_timeout_seconds == 46
+    assert config.insert_batch_size == 250
+
+
+@pytest.mark.parametrize(
+    ("environment_update", "message"),
+    [
+        ({}, "CLICKHOUSE_PUBLISHER_USER"),
+        ({"CLICKHOUSE_PUBLISHER_USER": "publisher"}, "CLICKHOUSE_PUBLISHER_PASSWORD"),
+        (
+            {
+                "CLICKHOUSE_PUBLISHER_USER": "publisher",
+                "CLICKHOUSE_PUBLISHER_PASSWORD": "password",
+                "CLICKHOUSE_SECURE": "sometimes",
+            },
+            "CLICKHOUSE_SECURE",
+        ),
+        (
+            {
+                "CLICKHOUSE_PUBLISHER_USER": "publisher",
+                "CLICKHOUSE_PUBLISHER_PASSWORD": "password",
+                "CLICKHOUSE_PORT": "not-a-number",
+            },
+            "CLICKHOUSE_PORT",
+        ),
+    ],
+)
+def test_publisher_config_builder_fails_closed_on_invalid_environment(
+    environment_update: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ServingPublicationError, match=message):
+        publisher_config_from_environment(environment_update)
 
 
 def _row(dataset: DatasetSpec, number: int) -> dict[str, Any]:

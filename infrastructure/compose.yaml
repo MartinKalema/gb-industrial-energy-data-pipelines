@@ -65,6 +65,7 @@ services:
       AIRFLOW__API__HOST: 0.0.0.0
       AIRFLOW__API__PORT: 8080
       AIRFLOW__CORE__DAGS_FOLDER: /opt/industrial-energy/orchestration/dags
+      AIRFLOW__CORE__DAG_RUN_CONF_OVERRIDES_PARAMS: "True"
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__PARALLELISM: "2"
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "False"
@@ -86,6 +87,7 @@ services:
       CLICKHOUSE_DATABASE: industrial_energy_serving
       CLICKHOUSE_PUBLISHER_USER: industrial_energy_publisher
       CLICKHOUSE_PUBLISHER_PASSWORD: ${CLICKHOUSE_PUBLISHER_PASSWORD:?CLICKHOUSE_PUBLISHER_PASSWORD is required}
+      CLICKHOUSE_READY_VERSIONS_TO_KEEP: ${CLICKHOUSE_READY_VERSIONS_TO_KEEP:-2}
       DBT_PROFILES_DIR: /opt/industrial-energy/transformations
       DBT_PROJECT_DIR: /opt/industrial-energy/transformations
       DBT_LOG_PATH: /opt/airflow/dbt/logs
@@ -139,6 +141,7 @@ services:
       PRODUCT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS: ${PRODUCT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS:-60}
       PRODUCT_MAX_QUERY_DAYS: ${PRODUCT_MAX_QUERY_DAYS:-31}
       PRODUCT_MAX_PAGE_SIZE: ${PRODUCT_MAX_PAGE_SIZE:-200}
+      PRODUCT_MAX_PUBLICATION_AGE_SECONDS: ${PRODUCT_MAX_PUBLICATION_AGE_SECONDS:-108000}
     ports:
       - "127.0.0.1:${PRODUCT_API_PORT:-8000}:8000"
     depends_on:
@@ -159,7 +162,7 @@ services:
       - "127.0.0.1:${PRODUCT_WEB_PORT:-3000}:3000"
     depends_on:
       historical-delivery-api:
-        condition: service_started
+        condition: service_healthy
     mem_limit: 512m
 
   spark-smoke:

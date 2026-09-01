@@ -23,6 +23,6 @@ EXPOSE 8000
 # counts. Each ClickHouse query has a 60-second default server deadline, so the
 # probe allows both bounded queries to finish before Docker declares failure.
 HEALTHCHECK --interval=30s --timeout=135s --start-period=30s --retries=4 \
-  CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=130).read()"]
+  CMD ["/app/.venv/bin/python", "-m", "apps.api.operational_check", "--timeout-seconds", "130", "--max-p95-ms", "130000"]
 
 CMD ["/app/.venv/bin/uvicorn", "apps.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

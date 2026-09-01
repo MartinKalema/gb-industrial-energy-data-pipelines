@@ -25,7 +25,6 @@ from .models import (
     RunPlan,
     build_run_plan,
     parse_utc_timestamp,
-    require_environment,
 )
 from .storage import ObjectStore, R2ObjectStore, content_sha256
 
@@ -748,9 +747,9 @@ def publish_tested_dimensional_mart_to_clickhouse(
     """
 
     from .clickhouse_publisher import (
-        PublisherConfig,
         ServingPublisher,
         dbt_result_identity,
+        publisher_config_from_environment,
     )
 
     plan = RunPlan.from_mapping(_require_mapping(plan_value, "plan"))
@@ -787,68 +786,13 @@ def publish_tested_dimensional_mart_to_clickhouse(
     dbt_identity = dbt_result_identity(dbt_test_result)
 
     if publisher is None:
-        environment = environment or os.environ
-
-        def positive_number(name: str, default: str) -> float:
-            try:
-                value = float(environment.get(name, default))
-            except (TypeError, ValueError) as exc:
-                raise PipelineError(f"{name} must be a positive number") from exc
-            if value <= 0:
-                raise PipelineError(f"{name} must be a positive number")
-            return value
-
-        def positive_integer(name: str, default: str) -> int:
-            try:
-                value = int(environment.get(name, default))
-            except (TypeError, ValueError) as exc:
-                raise PipelineError(f"{name} must be a positive integer") from exc
-            if value <= 0:
-                raise PipelineError(f"{name} must be a positive integer")
-            return value
-
-        secure_value = environment.get("CLICKHOUSE_SECURE", "false").strip().lower()
-        if secure_value not in {"true", "false"}:
-            raise PipelineError("CLICKHOUSE_SECURE must be true or false")
+        if environment is None:
+            environment = os.environ
         publisher = ServingPublisher(
-            PublisherConfig(
+            publisher_config_from_environment(
+                environment,
                 trino_endpoint=plan.trino_url,
-                trino_catalog=environment.get(
-                    "CLICKHOUSE_SOURCE_TRINO_CATALOG",
-                    environment.get("DBT_TRINO_CATALOG", plan.iceberg_catalog),
-                ),
-                trino_schema=environment.get(
-                    "CLICKHOUSE_SOURCE_TRINO_SCHEMA",
-                    "industrial_energy_marts",
-                ),
-                trino_user=environment.get("TRINO_USER", "airflow"),
-                trino_timeout_seconds=positive_number(
-                    "TRINO_HTTP_TIMEOUT_SECONDS", "60"
-                ),
-                trino_query_timeout_seconds=positive_number(
-                    "TRINO_QUERY_TIMEOUT_SECONDS", "300"
-                ),
-                clickhouse_host=environment.get("CLICKHOUSE_HOST", "clickhouse"),
-                clickhouse_port=positive_integer("CLICKHOUSE_PORT", "8123"),
-                clickhouse_database=environment.get(
-                    "CLICKHOUSE_DATABASE", "industrial_energy_serving"
-                ),
-                clickhouse_user=require_environment(
-                    "CLICKHOUSE_PUBLISHER_USER", environment
-                ),
-                clickhouse_password=require_environment(
-                    "CLICKHOUSE_PUBLISHER_PASSWORD", environment
-                ),
-                clickhouse_secure=secure_value == "true",
-                clickhouse_timeout_seconds=positive_number(
-                    "CLICKHOUSE_HTTP_TIMEOUT_SECONDS", "60"
-                ),
-                clickhouse_query_timeout_seconds=positive_number(
-                    "CLICKHOUSE_QUERY_TIMEOUT_SECONDS", "300"
-                ),
-                insert_batch_size=positive_integer(
-                    "CLICKHOUSE_INSERT_BATCH_SIZE", "1000"
-                ),
+                default_trino_catalog=plan.iceberg_catalog,
             )
         )
 
@@ -862,3 +806,75 @@ def publish_tested_dimensional_mart_to_clickhouse(
         result,
     )
     return result
+
+
+def remove_old_clickhouse_serving_versions(
+    publication_result_value: Mapping[str, Any],
+    *,
+    environment: Mapping[str, str] | None = None,
+    manager: Any | None = None,
+) -> dict[str, Any]:
+    """Remove only disposable serving copies after a successful publication.
+
+    The Airflow caller must hold the same one-slot writer pool used by the
+    publisher.  The retention manager refuses to keep fewer than the current
+    and previous ready versions and protects the publication that triggered
+    this cleanup before it performs any mutation.
+    """
+
+    from .clickhouse_publisher import (
+        SAFE_ATTEMPT_ID,
+        publisher_config_from_environment,
+    )
+    from .clickhouse_retention import ServingRetentionManager
+
+    publication_result = _require_mapping(
+        publication_result_value, "publication_result"
+    )
+    publication_id = publication_result.get("publication_id")
+    if not isinstance(publication_id, str) or not SAFE_ATTEMPT_ID.fullmatch(
+        publication_id
+    ):
+        raise PipelineError(
+            "serving retention requires a valid successful publication ID"
+        )
+    if publication_result.get("disposition") not in {"created", "reused"}:
+        raise PipelineError(
+            "serving retention requires a created or reused publication result"
+        )
+
+    if environment is None:
+        environment = os.environ
+    keep_value = environment.get("CLICKHOUSE_READY_VERSIONS_TO_KEEP", "2")
+    try:
+        keep_ready_versions = int(keep_value)
+    except (TypeError, ValueError) as exc:
+        raise PipelineError(
+            "CLICKHOUSE_READY_VERSIONS_TO_KEEP must be an integer"
+        ) from exc
+    if isinstance(keep_value, bool) or keep_ready_versions < 2:
+        raise PipelineError(
+            "CLICKHOUSE_READY_VERSIONS_TO_KEEP must be at least 2"
+        )
+
+    if manager is None:
+        manager = ServingRetentionManager(
+            publisher_config_from_environment(environment)
+        )
+    result = manager.cleanup(
+        keep_ready_versions=keep_ready_versions,
+        apply=True,
+        exclusive_writer_lock_confirmed=True,
+        protected_ready_publication_ids=(publication_id,),
+    )
+    result_mapping = _require_mapping(result, "serving retention result")
+    retained_ids = result_mapping.get("retained_ready_publication_ids")
+    if (
+        not isinstance(retained_ids, list)
+        or not all(isinstance(value, str) for value in retained_ids)
+        or publication_id not in retained_ids
+    ):
+        raise PipelineError(
+            "serving retention did not prove that the new publication was retained"
+        )
+    return {**dict(result_mapping), "trigger_publication_id": publication_id}

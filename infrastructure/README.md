@@ -89,7 +89,15 @@ First run the bounded Airflow pipeline and confirm its final dbt checkpoint,
 `test_complete_dimensional_mart_with_dbt`, and the following ClickHouse
 publication task, `publish_tested_dimensional_mart_to_clickhouse`, succeeded. A
 failed publication remains invisible to the API, which continues serving the
-previous successful release.
+previous successful release. Confirm the final
+`remove_old_clickhouse_serving_versions` task also completed. If cleanup alone
+fails, the validated publication may already be visible, but the Airflow run
+stays failed; repair and retry only cleanup.
+
+The ready publication must also be younger than the product profile's default
+30-hour age limit. For an intentionally static historical demonstration only,
+set `PRODUCT_MAX_PUBLICATION_AGE_SECONDS=0`; do not use that as a production
+default.
 
 With the ignored `.env` configured with the ClickHouse publisher and API
 passwords, start the product profile:
@@ -116,6 +124,7 @@ Default local endpoints are:
 | API OpenAPI documentation | <http://127.0.0.1:8000/docs> |
 | API process health | <http://127.0.0.1:8000/health/live> |
 | API mart readiness | <http://127.0.0.1:8000/health/ready> |
+| API process metrics | <http://127.0.0.1:8000/health/metrics> |
 
 Change the host ports with `PRODUCT_WEB_PORT` and `PRODUCT_API_PORT` in the
 ignored `.env` if the defaults are already in use. ClickHouse's HTTP and native
@@ -127,6 +136,13 @@ actors are `commercial-manager`, `customer-cust-001`, and
 fictional tenant, customer, site, and delivery point. The web persona selector
 is not a production login and is never the security boundary; a production
 deployment must disable demo mode and provide verified identity.
+
+The product profile also sets a 30-hour ready-publication age limit. This is a
+backstop for the local daily-publication assumption; the scheduled daily DAG
+must own the exact operating-date deadline. The web starts only after the API's
+identity, serving-count, repository, and freshness readiness checks pass. See
+the [API operational checks](../docs/operations/api-production-readiness.md)
+for alert and capacity-evidence commands and the unresolved production choices.
 
 Known energy and gross financial subtotals may remain visible with a
 provisional state. Official SLA, availability, penalty/credit, and net values

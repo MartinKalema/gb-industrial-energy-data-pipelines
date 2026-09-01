@@ -27,6 +27,38 @@ class HealthResponse(ResponseModel):
     status: Literal["live", "ready"]
 
 
+class OperationalCheckResponse(ResponseModel):
+    status: Literal["pass", "fail", "warning", "disabled"]
+    message: str
+
+
+class ReadinessResponse(ResponseModel):
+    status: Literal["ready", "not_ready"]
+    checked_at_utc: UtcDatetime
+    repository_backend: Literal["clickhouse", "trino"]
+    checks: dict[str, OperationalCheckResponse]
+    data_version: str | None
+    data_published_at_utc: UtcDatetime | None
+    publication_age_seconds: int | None = Field(default=None, ge=0)
+    maximum_publication_age_seconds: int | None = Field(default=None, ge=1)
+    expected_current_row_count: int | None = Field(default=None, ge=0)
+    actual_current_row_count: int | None = Field(default=None, ge=0)
+    expected_history_row_count: int | None = Field(default=None, ge=0)
+    actual_history_row_count: int | None = Field(default=None, ge=0)
+
+
+class OperationalMetricsResponse(ResponseModel):
+    status: Literal["ok"] = "ok"
+    process_started_at_utc: UtcDatetime
+    uptime_seconds: int = Field(ge=0)
+    in_flight_requests: int = Field(ge=0)
+    completed_request_count: int = Field(ge=0)
+    response_4xx_count: int = Field(ge=0)
+    response_5xx_count: int = Field(ge=0)
+    average_duration_ms: float = Field(ge=0)
+    maximum_duration_ms: float = Field(ge=0)
+
+
 class ActorResponse(ResponseModel):
     actor_id: str
     role: Literal["commercial_manager", "customer"]
