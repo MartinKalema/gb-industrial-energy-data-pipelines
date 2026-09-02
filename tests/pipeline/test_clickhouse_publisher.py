@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self
@@ -9,6 +10,9 @@ from typing import Any, Self
 import pytest
 
 from ingestion.batch.pipeline.clickhouse_publisher import (
+    CHANGE_SUMMARY_COLUMNS,
+    CHANGE_SUMMARY_SORTING_KEY,
+    CHANGE_SUMMARY_TABLE,
     CURRENT_DATASET,
     CURRENT_SORTING_KEY,
     CURRENT_TABLE,
@@ -20,6 +24,7 @@ from ingestion.batch.pipeline.clickhouse_publisher import (
     PUBLICATION_TABLE,
     ClickHouseHttpClient,
     ClickHouseServingStore,
+    DatasetChangeSummary,
     DatasetSpec,
     PublicationRecord,
     PublisherConfig,
@@ -119,9 +124,9 @@ def _row(dataset: DatasetSpec, number: int) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field in dataset.fields:
         if field.name == dataset.key_name:
-            value: Any = f"{dataset.table_name}-key-{number}"
+            value: Any = f"{number:064x}"
         elif field.name == "interval_key":
-            value = f"interval-key-{number}"
+            value = f"{number + 10:064x}"
         elif field.name == "tenant_authorization_scope_id":
             value = "tenant-customer-001"
         elif field.name == "customer_access_status":
@@ -203,9 +208,12 @@ class FakeServingStore:
         self.schema_ensured = False
         self.candidates: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self.publications: list[PublicationRecord] = []
+        self.change_summaries: dict[str, list[DatasetChangeSummary]] = {}
         self.events: list[str] = []
         self.fail_table: str | None = None
         self.corrupt_table: str | None = None
+        self.fail_change_summary = False
+        self.return_clickhouse_timestamps = False
 
     def ensure_schema(self) -> None:
         self.schema_ensured = True
@@ -225,17 +233,54 @@ class FakeServingStore:
             None,
         )
 
+    def find_latest_ready_publication(self) -> PublicationRecord | None:
+        self.events.append("find_latest_publication")
+        return self.publications[-1] if self.publications else None
+
+    def clone_candidate_rows(
+        self,
+        dataset: DatasetSpec,
+        *,
+        base_publication_id: str,
+        load_attempt_id: str,
+    ) -> None:
+        self.events.append(
+            f"clone:{dataset.table_name}:{base_publication_id}:{load_attempt_id}"
+        )
+        self.candidates[(dataset.table_name, load_attempt_id)] = deepcopy(
+            self.candidates[(dataset.table_name, base_publication_id)]
+        )
+
+    def delete_candidate_keys(
+        self,
+        dataset: DatasetSpec,
+        *,
+        load_attempt_id: str,
+        keys: Sequence[str],
+    ) -> None:
+        self.events.append(
+            f"delete:{dataset.table_name}:{load_attempt_id}:{len(keys)}"
+        )
+        key_set = set(keys)
+        self.candidates[(dataset.table_name, load_attempt_id)] = [
+            row
+            for row in self.candidates[(dataset.table_name, load_attempt_id)]
+            if row[dataset.key_name] not in key_set
+        ]
+
     def insert_candidate_rows(
         self,
         dataset: DatasetSpec,
         load_attempt_id: str,
         rows: Sequence[Mapping[str, Any]],
     ) -> None:
+        if not rows:
+            return
         self.events.append(f"insert:{dataset.table_name}:{load_attempt_id}")
         if self.fail_table == dataset.table_name:
             raise RuntimeError("simulated partial insert failure")
-        self.candidates[(dataset.table_name, load_attempt_id)] = deepcopy(
-            [dict(row) for row in rows]
+        self.candidates.setdefault((dataset.table_name, load_attempt_id), []).extend(
+            deepcopy([dict(row) for row in rows])
         )
 
     def read_candidate_rows(
@@ -244,8 +289,33 @@ class FakeServingStore:
         self.events.append(f"read:{dataset.table_name}:{load_attempt_id}")
         rows = deepcopy(self.candidates[(dataset.table_name, load_attempt_id)])
         if self.corrupt_table == dataset.table_name and rows:
-            rows[0][dataset.key_name] = "destination-corruption"
+            rows[0][dataset.key_name] = "f" * 64
+        if self.return_clickhouse_timestamps:
+            for row in rows:
+                for field in dataset.fields:
+                    value = row[field.name]
+                    if (
+                        field.value_kind == "utc_datetime"
+                        and isinstance(value, str)
+                        and value.endswith("Z")
+                    ):
+                        row[field.name] = value[:-1].replace("T", " ")
         return rows
+
+    def insert_change_summaries(
+        self, summaries: Sequence[DatasetChangeSummary]
+    ) -> None:
+        attempt_id = summaries[0].load_attempt_id
+        self.events.append(f"summary:{attempt_id}")
+        if self.fail_change_summary:
+            raise RuntimeError("simulated change-summary failure")
+        self.change_summaries[attempt_id] = list(summaries)
+
+    def read_change_summaries(
+        self, load_attempt_id: str
+    ) -> list[DatasetChangeSummary]:
+        self.events.append(f"read_summary:{load_attempt_id}")
+        return deepcopy(self.change_summaries.get(load_attempt_id, []))
 
     def insert_publication(self, publication: PublicationRecord) -> None:
         self.events.append(f"marker:{publication.publication_id}")
@@ -268,10 +338,16 @@ def _publisher(
 
 
 def _publish(publisher: ServingPublisher) -> dict[str, Any]:
+    return _publish_with_dbt_hash(publisher, "b" * 64)
+
+
+def _publish_with_dbt_hash(
+    publisher: ServingPublisher, dbt_result_identity_sha256: str
+) -> dict[str, Any]:
     return publisher.publish(
         pipeline_run_id="batch-20260826-20260826-0123456789abcdef",
         coverage_payload_sha256="a" * 64,
-        dbt_result_identity_sha256="b" * 64,
+        dbt_result_identity_sha256=dbt_result_identity_sha256,
     )
 
 
@@ -284,6 +360,15 @@ def test_success_marks_candidate_last_and_returns_only_compact_metadata() -> Non
 
     assert result["disposition"] == "created"
     assert result["publication_id"] == attempt
+    assert result["publication_mode"] == "full"
+    assert result["base_publication_id"] is None
+    assert result["change_counts"][CURRENT_TABLE] == {
+        "source_row_count": 2,
+        "inserted_row_count": 2,
+        "updated_row_count": 0,
+        "deleted_row_count": 0,
+        "unchanged_row_count": 0,
+    }
     assert result["current_row_count"] == 2
     assert result["history_row_count"] == 2
     assert result["minimum_reporting_date"] == "2026-08-26"
@@ -298,6 +383,103 @@ def test_success_marks_candidate_last_and_returns_only_compact_metadata() -> Non
     assert current_candidate[0]["applicable_interval_count"] is None
     assert current_candidate[0]["committed_mwh_th"] == "1.250000"
     assert current_candidate[0]["interval_start_at"].endswith(".000000Z")
+
+
+def test_incremental_publication_clones_base_and_applies_insert_update_delete() -> None:
+    reader = FakeMartReader()
+    reader.rows[CURRENT_TABLE].append(_row(CURRENT_DATASET, 3))
+    store = FakeServingStore()
+    base_attempt = "publication-" + "a" * 32
+    next_attempt = "publication-" + "b" * 32
+    publisher = _publisher(reader, store, [base_attempt, next_attempt])
+    _publish_with_dbt_hash(publisher, "1" * 64)
+
+    updated = deepcopy(reader.rows[CURRENT_TABLE][1])
+    updated["customer_name"] = "Updated customer name"
+    reader.rows[CURRENT_TABLE] = [
+        reader.rows[CURRENT_TABLE][0],
+        updated,
+        _row(CURRENT_DATASET, 4),
+    ]
+    result = _publish_with_dbt_hash(publisher, "2" * 64)
+
+    assert result["publication_mode"] == "incremental"
+    assert result["base_publication_id"] == base_attempt
+    assert result["change_counts"][CURRENT_TABLE] == {
+        "source_row_count": 3,
+        "inserted_row_count": 1,
+        "updated_row_count": 1,
+        "deleted_row_count": 1,
+        "unchanged_row_count": 1,
+    }
+    assert result["change_counts"][HISTORY_TABLE] == {
+        "source_row_count": 2,
+        "inserted_row_count": 0,
+        "updated_row_count": 0,
+        "deleted_row_count": 0,
+        "unchanged_row_count": 2,
+    }
+    assert store.candidates[(CURRENT_TABLE, base_attempt)][1][
+        "customer_name"
+    ] != "Updated customer name"
+    next_rows = store.candidates[(CURRENT_TABLE, next_attempt)]
+    assert {row[CURRENT_DATASET.key_name] for row in next_rows} == {
+        row[CURRENT_DATASET.key_name] for row in reader.rows[CURRENT_TABLE]
+    }
+    assert next(
+        row for row in next_rows if row[CURRENT_DATASET.key_name] == f"{2:064x}"
+    )["customer_name"] == "Updated customer name"
+    second_events = store.events[store.events.index("find_latest_publication", 1) :]
+    assert second_events[-2:] == [f"summary:{next_attempt}", f"marker:{next_attempt}"]
+    assert any(event.startswith(f"clone:{CURRENT_TABLE}:{base_attempt}") for event in second_events)
+    assert f"delete:{CURRENT_TABLE}:{next_attempt}:2" in second_events
+    assert f"insert:{CURRENT_TABLE}:{next_attempt}" in second_events
+
+
+def test_zero_change_publication_clones_without_reinserting_source_rows() -> None:
+    reader = FakeMartReader()
+    store = FakeServingStore()
+    base_attempt = "publication-" + "c" * 32
+    next_attempt = "publication-" + "d" * 32
+    publisher = _publisher(reader, store, [base_attempt, next_attempt])
+    _publish_with_dbt_hash(publisher, "3" * 64)
+    event_count = len(store.events)
+
+    result = _publish_with_dbt_hash(publisher, "4" * 64)
+
+    assert result["publication_mode"] == "incremental"
+    assert result["base_publication_id"] == base_attempt
+    assert all(
+        counts["inserted_row_count"] == 0
+        and counts["updated_row_count"] == 0
+        and counts["deleted_row_count"] == 0
+        and counts["unchanged_row_count"] == 2
+        for counts in result["change_counts"].values()
+    )
+    new_events = store.events[event_count:]
+    assert sum(event.startswith("clone:") for event in new_events) == 2
+    assert sum(event.startswith("delete:") for event in new_events) == 2
+    assert not any(event.startswith("insert:") for event in new_events)
+    assert new_events[-2:] == [f"summary:{next_attempt}", f"marker:{next_attempt}"]
+
+
+def test_clickhouse_timestamp_format_can_be_reused_as_incremental_base() -> None:
+    reader = FakeMartReader()
+    store = FakeServingStore()
+    base_attempt = "publication-" + "1" * 32
+    next_attempt = "publication-" + "2" * 32
+    publisher = _publisher(reader, store, [base_attempt, next_attempt])
+    _publish_with_dbt_hash(publisher, "5" * 64)
+    store.return_clickhouse_timestamps = True
+
+    result = _publish_with_dbt_hash(publisher, "6" * 64)
+
+    assert result["publication_mode"] == "incremental"
+    assert result["base_publication_id"] == base_attempt
+    assert all(
+        counts["unchanged_row_count"] == 2
+        for counts in result["change_counts"].values()
+    )
 
 
 def test_partial_failure_has_no_marker_and_retry_uses_a_new_attempt() -> None:
@@ -337,6 +519,20 @@ def test_destination_validation_failure_never_inserts_marker() -> None:
     assert (HISTORY_TABLE, attempt) in store.candidates
 
 
+def test_change_summary_failure_leaves_validated_candidate_invisible() -> None:
+    reader = FakeMartReader()
+    store = FakeServingStore()
+    store.fail_change_summary = True
+    attempt = "publication-" + "4" * 32
+
+    with pytest.raises(RuntimeError, match="change-summary failure"):
+        _publish(_publisher(reader, store, [attempt]))
+
+    assert not store.publications
+    assert (CURRENT_TABLE, attempt) in store.candidates
+    assert store.events[-1] == f"summary:{attempt}"
+
+
 def test_exact_retry_reuses_ready_publication_without_new_candidate_rows() -> None:
     reader = FakeMartReader()
     store = FakeServingStore()
@@ -355,7 +551,45 @@ def test_exact_retry_reuses_ready_publication_without_new_candidate_rows() -> No
         "find_publication",
         f"read:{CURRENT_TABLE}:{first_attempt}",
         f"read:{HISTORY_TABLE}:{first_attempt}",
+        f"read_summary:{first_attempt}",
     ]
+
+
+@pytest.mark.parametrize(
+    "damage", ["missing", "corrupt", "coordinated_count", "timestamp"]
+)
+def test_exact_retry_fails_closed_on_invalid_change_summary(damage: str) -> None:
+    reader = FakeMartReader()
+    store = FakeServingStore()
+    attempt = "publication-" + "e" * 32
+    publisher = _publisher(reader, store, [attempt])
+    _publish(publisher)
+    if damage == "missing":
+        store.change_summaries[attempt] = []
+    elif damage == "corrupt":
+        current_summary = store.change_summaries[attempt][0]
+        store.change_summaries[attempt][0] = replace(
+            current_summary,
+            source_row_count=current_summary.source_row_count + 1,
+        )
+    elif damage == "coordinated_count":
+        current_summary = store.change_summaries[attempt][0]
+        store.change_summaries[attempt][0] = replace(
+            current_summary,
+            source_row_count=current_summary.source_row_count + 1,
+            inserted_row_count=current_summary.inserted_row_count + 1,
+        )
+    else:
+        current_summary = store.change_summaries[attempt][0]
+        store.change_summaries[attempt][0] = replace(
+            current_summary,
+            recorded_at_utc="2020-01-01T00:00:00.000000Z",
+        )
+
+    with pytest.raises(ServingPublicationError, match="change summary"):
+        _publish(publisher)
+
+    assert len(store.publications) == 1
 
 
 def test_damaged_ready_publication_is_replaced_with_a_fresh_valid_candidate() -> None:
@@ -372,6 +606,9 @@ def test_damaged_ready_publication_is_replaced_with_a_fresh_valid_candidate() ->
     assert created["publication_id"] == first_attempt
     assert repaired["disposition"] == "created"
     assert repaired["publication_id"] == replacement_attempt
+    assert repaired["publication_mode"] == "full"
+    assert repaired["base_publication_id"] is None
+    assert repaired["change_counts"][CURRENT_TABLE]["inserted_row_count"] == 2
     assert len(store.publications) == 2
     assert store.publications[-1].publication_id == replacement_attempt
     assert len(store.candidates[(HISTORY_TABLE, replacement_attempt)]) == 2
@@ -393,6 +630,50 @@ class NoopClickHouseClient:
     pass
 
 
+class RecordingClickHouseClient:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, str | None]] = []
+
+    def execute(self, sql: str, *, database: str | None = None) -> None:
+        self.executed.append((sql, database))
+
+
+def test_incremental_store_clones_server_side_and_validates_delete_keys() -> None:
+    client = RecordingClickHouseClient()
+    store = ClickHouseServingStore(_config(), client=client)  # type: ignore[arg-type]
+    base_attempt = "publication-" + "1" * 32
+    next_attempt = "publication-" + "2" * 32
+    safe_key = "a" * 64
+
+    store.clone_candidate_rows(
+        CURRENT_DATASET,
+        base_publication_id=base_attempt,
+        load_attempt_id=next_attempt,
+    )
+    store.delete_candidate_keys(
+        CURRENT_DATASET,
+        load_attempt_id=next_attempt,
+        keys=[safe_key],
+    )
+
+    clone_sql, clone_database = client.executed[0]
+    delete_sql, delete_database = client.executed[1]
+    assert "INSERT INTO" in clone_sql and "SELECT" in clone_sql
+    assert base_attempt in clone_sql and next_attempt in clone_sql
+    assert "ALTER TABLE" in delete_sql and "DELETE WHERE" in delete_sql
+    assert "mutations_sync = 2" in delete_sql
+    assert safe_key in delete_sql
+    assert clone_database == delete_database == "industrial_energy_serving"
+
+    with pytest.raises(ServingPublicationError, match="invalid interval_key"):
+        store.delete_candidate_keys(
+            CURRENT_DATASET,
+            load_attempt_id=next_attempt,
+            keys=["' OR 1 = 1 --"],
+        )
+    assert len(client.executed) == 2
+
+
 class SchemaContractClient:
     def __init__(self) -> None:
         self.executed: list[str] = []
@@ -403,6 +684,7 @@ class SchemaContractClient:
             HISTORY_TABLE: [("load_attempt_id", "String")]
             + [(field.name, field.clickhouse_type) for field in HISTORY_DATASET.fields],
             PUBLICATION_TABLE: list(PUBLICATION_COLUMNS),
+            CHANGE_SUMMARY_TABLE: list(CHANGE_SUMMARY_COLUMNS),
         }
         self.metadata = {
             CURRENT_TABLE: {
@@ -417,6 +699,10 @@ class SchemaContractClient:
                 "engine": "MergeTree",
                 "sorting_key": PUBLICATION_SORTING_KEY,
             },
+            CHANGE_SUMMARY_TABLE: {
+                "engine": "MergeTree",
+                "sorting_key": CHANGE_SUMMARY_SORTING_KEY,
+            },
         }
 
     def execute(self, sql: str, *, database: str | None = None) -> None:
@@ -426,7 +712,9 @@ class SchemaContractClient:
     def query_json_rows(self, sql: str, *, database: str) -> list[dict[str, Any]]:
         assert database == "industrial_energy_serving"
         self.queried.append(sql)
-        table_name = next(table for table in self.columns if table in sql)
+        table_name = next(
+            table for table in sorted(self.columns, key=len, reverse=True) if table in sql
+        )
         if "DESCRIBE TABLE" in sql:
             return [
                 {"name": name, "type": column_type}
@@ -487,10 +775,13 @@ def test_serving_schema_is_marker_gated_and_uses_only_merge_tree_tables() -> Non
     assert "`known_from_at` DateTime64(6, 'UTC')" in store.history_table_sql
     assert "publication_id String" in store.publication_table_sql
     assert "source_fingerprint_sha256 FixedString(64)" in (store.publication_table_sql)
+    assert "load_attempt_id String" in store.change_summary_table_sql
+    assert "updated_row_count UInt64" in store.change_summary_table_sql
     for statement in (
         store.current_table_sql,
         store.history_table_sql,
         store.publication_table_sql,
+        store.change_summary_table_sql,
     ):
         assert "ENGINE = MergeTree" in statement
         assert "ReplacingMergeTree" not in statement
@@ -502,10 +793,10 @@ def test_ensure_schema_verifies_exact_columns_engine_and_sorting_keys() -> None:
 
     store.ensure_schema()
 
-    assert len(client.executed) == 3
-    assert len(client.queried) == 6
-    assert sum("DESCRIBE TABLE" in query for query in client.queried) == 3
-    assert sum("FROM system.tables" in query for query in client.queried) == 3
+    assert len(client.executed) == 4
+    assert len(client.queried) == 8
+    assert sum("DESCRIBE TABLE" in query for query in client.queried) == 4
+    assert sum("FROM system.tables" in query for query in client.queried) == 4
 
 
 @pytest.mark.parametrize("mismatch", ["column_type", "engine", "sorting_key"])

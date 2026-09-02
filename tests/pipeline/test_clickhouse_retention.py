@@ -7,6 +7,9 @@ from typing import Any
 import pytest
 
 from ingestion.batch.pipeline.clickhouse_publisher import (
+    CHANGE_SUMMARY_COLUMNS,
+    CHANGE_SUMMARY_SORTING_KEY,
+    CHANGE_SUMMARY_TABLE,
     CURRENT_DATASET,
     CURRENT_SORTING_KEY,
     CURRENT_TABLE,
@@ -358,6 +361,7 @@ class RecordingClickHouseClient:
         self.ready_ids = [_attempt("1"), _attempt("2"), _attempt("3")]
         self.current_ids = set(self.ready_ids) | {_attempt("4")}
         self.history_ids = set(self.ready_ids)
+        self.change_summary_ids = set(self.ready_ids) | {_attempt("5")}
 
     def execute(self, sql: str, *, database: str | None = None) -> None:
         self.executed.append((sql, database))
@@ -371,6 +375,11 @@ class RecordingClickHouseClient:
             return [{"load_attempt_id": value} for value in sorted(self.current_ids)]
         if f"FROM `industrial_energy_serving`.`{HISTORY_TABLE}`" in sql:
             return [{"load_attempt_id": value} for value in sorted(self.history_ids)]
+        if f"FROM `industrial_energy_serving`.`{CHANGE_SUMMARY_TABLE}`" in sql:
+            return [
+                {"load_attempt_id": value}
+                for value in sorted(self.change_summary_ids)
+            ]
         raise AssertionError(f"Unexpected retention query: {sql}")
 
 
@@ -379,15 +388,25 @@ def test_clickhouse_store_mutations_are_synchronous_and_serving_only() -> None:
     store = ClickHouseRetentionStore(_config(), client=client)  # type: ignore[arg-type]
 
     assert store.list_ready_publication_ids() == client.ready_ids
-    assert store.list_candidate_attempt_ids() == client.current_ids | client.history_ids
+    assert store.list_candidate_attempt_ids() == (
+        client.current_ids | client.history_ids | client.change_summary_ids
+    )
     store.delete_ready_publication_markers([_attempt("3")])
-    store.delete_candidate_rows([_attempt("3"), _attempt("4")])
+    store.delete_candidate_rows([_attempt("3"), _attempt("4"), _attempt("5")])
 
     mutation_sql = "\n".join(sql for sql, _database in client.executed)
     assert f"`industrial_energy_serving`.`{PUBLICATION_TABLE}`" in mutation_sql
     assert f"`industrial_energy_serving`.`{CURRENT_TABLE}`" in mutation_sql
     assert f"`industrial_energy_serving`.`{HISTORY_TABLE}`" in mutation_sql
-    assert mutation_sql.count("SETTINGS mutations_sync = 2") == 3
+    assert f"`industrial_energy_serving`.`{CHANGE_SUMMARY_TABLE}`" in mutation_sql
+    assert mutation_sql.count("SETTINGS mutations_sync = 2") == 4
+    assert PUBLICATION_TABLE in client.executed[0][0]
+    assert all(
+        table_name in client.executed[index][0]
+        for index, table_name in enumerate(
+            (CURRENT_TABLE, HISTORY_TABLE, CHANGE_SUMMARY_TABLE), start=1
+        )
+    )
     assert "r2." not in mutation_sql.lower()
     assert "iceberg" not in mutation_sql.lower()
     assert all(
@@ -433,11 +452,13 @@ def test_retention_store_schema_contract_is_the_publisher_contract() -> None:
                         for field in HISTORY_DATASET.fields
                     ],
                 ],
+                CHANGE_SUMMARY_TABLE: list(CHANGE_SUMMARY_COLUMNS),
                 PUBLICATION_TABLE: list(PUBLICATION_COLUMNS),
             }
             self.sorting_keys = {
                 CURRENT_TABLE: CURRENT_SORTING_KEY,
                 HISTORY_TABLE: HISTORY_SORTING_KEY,
+                CHANGE_SUMMARY_TABLE: CHANGE_SUMMARY_SORTING_KEY,
                 PUBLICATION_TABLE: PUBLICATION_SORTING_KEY,
             }
 
@@ -463,4 +484,4 @@ def test_retention_store_schema_contract_is_the_publisher_contract() -> None:
 
     ClickHouseRetentionStore(_config(), client=client).ensure_schema()  # type: ignore[arg-type]
 
-    assert len(client.executed) == 3
+    assert len(client.executed) == 4

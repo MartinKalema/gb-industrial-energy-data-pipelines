@@ -13,6 +13,13 @@ availability, or revenue. The publisher copies the governed fields needed by
 the API, preserves exact decimals, timestamps, nulls, and statuses, and checks
 that the copy matches its source.
 
+The normal publication path is incremental. It compares the complete tested
+dbt marts with the newest usable ClickHouse version. Unchanged rows are copied
+inside ClickHouse. The publisher still reads every tested mart row from Trino,
+but it sends only new and changed row payloads into ClickHouse. This reduces
+the second transfer and ClickHouse insertion work without weakening the final
+check.
+
 ## Why it exists
 
 Direct product queries through local Trino and the remote R2 catalog were
@@ -31,14 +38,18 @@ why a serving database was added after latency was measured.
 Cloudflare R2 / Iceberg                 canonical evidence and tables
           |
           v
-Trino + dbt                             governed transformations and tests
+Trino + dbt                             build and test the complete marts
           |
           | test_complete_dimensional_mart_with_dbt succeeds
           v
-Airflow task
 publish_tested_dimensional_mart_to_clickhouse
           |
-          | copy, validate, then publish a ready marker
+          | compare every key and field with the last ready version
+          | clone unchanged rows inside ClickHouse
+          | insert only inserted and updated row payloads into ClickHouse
+          | remove deleted or replaced keys from the hidden new copy
+          | validate the complete new copy
+          | record change counts, then write the ready marker last
           v
 ClickHouse native MergeTree tables      rebuildable frontend copy
           |
@@ -51,14 +62,21 @@ remove_old_clickhouse_serving_versions  serialized maintenance
 FastAPI -> Next.js -> browser
 ```
 
-Trino is needed while the finite batch pipeline builds, tests, and publishes a
-mart. It is not needed by the `product` profile after a successful publication.
-The streaming decision is unchanged: Spark Structured Streaming remains the
-only streaming compute engine.
+The scheduled daily Airflow workflow runs this publication after each tested
+batch. The manual workflow uses the same path for a replay or backfill. This is
+checkpointed incremental publication, not continuous change data capture
+(CDC). Here, checkpointed means that each new publication records which ready
+version it used as its base and becomes the next ready version only after every
+check passes. No service watches Iceberg all day for each individual change.
+
+Trino is needed while the finite batch pipeline builds, tests, compares, and
+publishes a mart. It is not needed by the `product` profile after a successful
+publication. The streaming decision is unchanged: Spark Structured Streaming
+remains the only streaming compute engine.
 
 ## What is published
 
-The `industrial_energy_serving` database has three native ClickHouse
+The `industrial_energy_serving` database has four native ClickHouse
 `MergeTree` tables:
 
 | Table | Purpose |
@@ -66,6 +84,7 @@ The `industrial_energy_serving` database has three native ClickHouse
 | `delivery_interval_current` | One denormalized product row for each current delivery-point/30-minute result, plus the governed fields needed for summaries. |
 | `delivery_interval_history` | Denormalized source-knowledge windows used to explain how an interval changed. |
 | `data_publication` | The ready marker and evidence for one validated product-data version. |
+| `data_publication_change_summary` | Durable source, inserted, updated, deleted, and unchanged row counts for each dataset in one publication attempt. |
 
 Current and history rows include a `load_attempt_id`. A marker's
 `publication_id` is the same value. The API can see a candidate only when this
@@ -91,17 +110,44 @@ For each publication, the task:
 
 1. Creates missing serving tables, then verifies every persisted table's
    columns, engine, and sorting key against the supported schema contract.
-2. Reads the certified current and history projections through Trino.
+2. Reads every full row from both tested dbt marts through Trino. It compares
+   each stable key and every governed field with the newest usable ready
+   ClickHouse version. A row is:
+   - inserted when its key exists only in the tested mart;
+   - updated when its key exists in both places but one or more fields changed;
+   - deleted when its key exists only in the previous ready version; or
+   - unchanged when its key and all fields match.
 3. Calculates a source fingerprint from the tested dbt result, source coverage,
    table contract, row counts, date coverage, and deterministic content hashes.
-4. Reuses an existing ready publication only after re-reading its current and
-   history rows and confirming that their counts and hashes still match.
-5. Otherwise creates a new `load_attempt_id` and inserts candidate rows into
-   the two serving tables.
-6. Reads those candidate rows back and checks the column contract, null rules,
-   exact decimal and timestamp representation, row counts, unique keys,
-   non-empty tenant scopes, reporting-date coverage, and content hashes.
-7. Inserts the `data_publication` ready marker as the final write.
+   An exact retry reuses an existing healthy ready publication.
+4. Validates the newest ready version before using it as the base. If there is
+   no ready version, or its stored rows no longer match its marker counts and
+   hashes, the task uses a full publication. A connection, query, or transport
+   error fails the task; it is not hidden by a full fallback.
+5. Creates a new `load_attempt_id`. This unfinished new copy is called the
+   candidate. It has no ready marker, so the API cannot see it.
+6. For an incremental publication, ClickHouse clones the base version into the
+   candidate with server-side `INSERT INTO ... SELECT`. It then removes changed
+   and deleted keys from that hidden candidate with a synchronous mutation.
+   The publisher inserts only the new and changed row payloads into ClickHouse.
+   It already read every tested source row from Trino for the complete
+   comparison. The saving is on the publisher-to-ClickHouse transfer and
+   ClickHouse insertion, not on the Trino read.
+7. For a full publication, the publisher sends and inserts every source row.
+8. Reads the complete candidate back and checks the column contract, null
+   rules, exact decimals and timestamps, row counts, unique keys, tenant scopes,
+   reporting-date coverage, and whole-dataset content hashes.
+9. Writes one row per dataset to `data_publication_change_summary`. The durable
+   record includes `publication_mode` (`full` or `incremental`), the optional
+   `base_publication_id`, and source, inserted, updated, deleted, and unchanged
+   counts.
+10. Inserts the `data_publication` ready marker as the final write.
+
+For example, suppose the previous version has 100 rows. The tested mart has two
+new rows, one changed row, and one deleted row. ClickHouse clones the 100 old
+rows. The publisher removes the changed and deleted keys, sends the two new
+rows and the changed replacement, and finishes with 101 rows. It then compares
+all 101 rows with the tested mart before writing the ready marker.
 
 This final-marker rule gives the workflow its failure behavior:
 
@@ -112,15 +158,19 @@ This final-marker rule gives the workflow its failure behavior:
 | Validation fails | No marker exists, so the failed candidate is invisible. |
 | An exact successful publication is retried | The existing ready version is reused. |
 | A marker remains but its serving rows are damaged | The retry builds and validates a fresh publication instead of trusting the damaged version. |
+| No usable previous version exists | A full publication builds a new base version. |
+| Comparing, cloning, deleting, or inserting fails | The task fails; it does not silently switch modes or publish a partial result. |
 | A persisted table no longer matches the supported schema | Publication stops with a migration/rebuild error before copying data. |
 | Any new publication fails | The API continues serving the previous ready version. |
 | Retention cleanup fails after publication | The validated version remains visible, but the Airflow run stays failed until only the cleanup task is repaired and retried. |
 
-Candidate rows are immutable during publication. The separate retention task
-never deletes the newest two ready versions, removes an old ready marker before
-its rows, and removes unmarked failed attempts only while holding the same
-one-slot writer pool. Cleanup remains separate from publication correctness; see
-the [serving retention and recovery runbook](../operations/clickhouse-serving-retention-and-recovery.md).
+The task changes candidate rows only while they are hidden. Once the ready
+marker exists, that version is never changed. The separate retention task never
+deletes the newest two ready versions, removes an old ready marker before its
+data and change-summary rows, and removes unmarked failed attempts only while
+holding the same one-slot writer pool. Cleanup remains separate from
+publication correctness; see the
+[serving retention and recovery runbook](../operations/clickhouse-serving-retention-and-recovery.md).
 
 ## Consistent API reads
 
@@ -189,11 +239,19 @@ default.
 
 ## Verification evidence
 
-The real local publication copied 96 current rows and 558 authorized history
-rows. The destination counts and deterministic hashes matched the certified
-Trino projections. Repeating the publication returned `reused` rather than
-creating another version. Failure tests also prove that partial loads and
-validation failures do not replace the last good version.
+The earlier full-publication verification copied 96 current rows and 558
+authorized history rows. The destination counts and deterministic hashes
+matched the certified Trino projections. Repeating the publication returned
+`reused` rather than creating another version. The same complete-candidate
+checks remain the release gate for incremental publication.
+
+On 2026-09-03, an isolated database on the pinned ClickHouse 26.3 container
+verified the real SQL path. The first publication used `full` mode. The second
+used that version as its base, inserted one current row, updated one, deleted
+one, and reused 94 unchanged current rows. It reused all 558 unchanged history
+rows. An exact retry returned `reused`. The temporary verification database was
+removed afterward. Automated tests also cover no-change publication, a damaged
+base, interrupted writes, unsafe keys, and failure before the final marker.
 
 ## Trade-offs
 
@@ -202,12 +260,26 @@ validation failures do not replace the last good version.
 | Rebuildable ClickHouse copy | Fast product reads without changing the canonical lakehouse | One more local service and a publication boundary to operate |
 | Native `MergeTree` tables | Predictable interactive reads over product-shaped columns | Data is duplicated from the canonical mart |
 | Immutable version plus final marker | Failed releases remain invisible and page requests can be pinned | Retention needs a serialized marker-first cleanup |
-| Full snapshot publication first | Easy to reason about, compare, retry, and rebuild | Later data growth may justify incremental publication |
+| Full mart comparison plus incremental ClickHouse insertion | Only new and changed row payloads are sent into ClickHouse while every result is still checked | The publisher still reads the complete marts from Trino, dbt still rebuilds them, and ClickHouse still copies unchanged rows internally |
+| Automatic full fallback for no usable base | A new or damaged ClickHouse serving database can be rebuilt from Iceberg | A fallback transfers the complete dataset and may take longer |
+| Durable per-dataset change counts | Operators can see what each run changed and which base it used | Adds one small serving table and retention responsibility |
 | Tenant checks in FastAPI and every query | Keeps authorization server-side and testable | ClickHouse is not currently the policy authority by itself |
 
-Incremental publication, production identity, and managed ClickHouse are future
-decisions. Count-based serving cleanup protects the current and previous ready
-versions when both exist; a longer time-based client-retention promise still needs a production
-policy. These decisions do not change the current rule: R2 and Iceberg are
-canonical, dbt owns business definitions, and only a fully validated ClickHouse
-publication is visible to the product.
+This design reduces publication transfer; it does not make the whole pipeline
+incremental. dbt still rebuilds and tests the complete marts, and the publisher
+still compares the complete result. It also does not provide live changes
+between Airflow runs.
+
+True continuous CDC would need an upstream change stream or append-only change
+table, stable ordering and delete rules, durable stream checkpoints, continuous
+schema handling and monitoring, and a long-running processor. Under the
+accepted compute decision, Spark Structured Streaming would own that work.
+ClickHouse's documented Iceberg CDC connector is described as upcoming and as a
+ClickHouse Cloud feature, so it is not the mechanism used by this self-hosted
+project. See the [incremental serving publication ADR](adr-004-incremental-clickhouse-serving-publication.md).
+
+Count-based serving cleanup protects the current and previous ready versions
+when both exist; a longer time-based client-retention promise still needs a
+production policy. These decisions do not change the current rule: R2 and
+Iceberg are canonical, dbt owns business definitions, and only a fully
+validated ClickHouse publication is visible to the product.

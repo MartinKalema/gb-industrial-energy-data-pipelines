@@ -21,19 +21,21 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .clickhouse_publisher import (
+    CHANGE_SUMMARY_TABLE,
     CURRENT_TABLE,
     HISTORY_TABLE,
     PUBLICATION_TABLE,
     READY_STATUS,
+    SAFE_ATTEMPT_ID,
     ClickHouseHttpClient,
     ClickHouseServingStore,
     PublisherConfig,
-    SAFE_ATTEMPT_ID,
     ServingPublicationError,
 )
 
 MINIMUM_READY_VERSIONS = 2
 DELETE_BATCH_SIZE = 100
+CANDIDATE_TABLES = (CURRENT_TABLE, HISTORY_TABLE, CHANGE_SUMMARY_TABLE)
 
 
 class ServingRetentionError(ServingPublicationError):
@@ -95,7 +97,7 @@ class RetentionPlan:
 
 
 class ClickHouseRetentionStore:
-    """Retention operations over the three disposable serving tables only."""
+    """Retention operations over the disposable ClickHouse serving tables only."""
 
     def __init__(
         self,
@@ -128,7 +130,7 @@ class ClickHouseRetentionStore:
 
     def list_candidate_attempt_ids(self) -> set[str]:
         attempt_ids: set[str] = set()
-        for table_name in (CURRENT_TABLE, HISTORY_TABLE):
+        for table_name in CANDIDATE_TABLES:
             rows = self._client.query_json_rows(
                 f"""
                     SELECT DISTINCT load_attempt_id
@@ -158,7 +160,7 @@ class ClickHouseRetentionStore:
     def delete_candidate_rows(self, attempt_ids: Sequence[str]) -> None:
         for batch in _attempt_id_batches(attempt_ids):
             literals = _attempt_id_literals(batch)
-            for table_name in (CURRENT_TABLE, HISTORY_TABLE):
+            for table_name in CANDIDATE_TABLES:
                 self._client.execute(
                     f"""
                         ALTER TABLE {self._qualified(table_name)}
