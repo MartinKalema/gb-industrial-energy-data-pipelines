@@ -739,11 +739,13 @@ def publish_tested_dimensional_mart_to_clickhouse(
     environment: Mapping[str, str] | None = None,
     publisher: Any | None = None,
 ) -> dict[str, Any]:
-    """Publish only a successfully tested dimensional mart to ClickHouse.
+    """Incrementally publish a successfully tested dimensional mart to ClickHouse.
 
     The returned result is deliberately compact enough for Airflow XCom.  All
-    serving rows remain in ClickHouse, where a final publication marker makes
-    one fully validated ``load_attempt_id`` visible to the frontend.
+    source rows are compared with the last ready version, while only new or
+    changed row payloads are sent into ClickHouse when a usable base exists.
+    A final publication marker makes one fully validated ``load_attempt_id``
+    visible to the frontend.
     """
 
     from .clickhouse_publisher import (

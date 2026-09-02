@@ -86,15 +86,21 @@ source-knowledge history.
 
 **ClickHouse serving milestone:** implemented and locally verified on
 2026-08-29. After `test_complete_dimensional_mart_with_dbt` succeeds, Airflow's
-`publish_tested_dimensional_mart_to_clickhouse` task copies the product-shaped
-current and history projections to versioned native `MergeTree` tables. A new
-version remains invisible until its counts, keys, tenant scopes, date coverage,
-and content hashes pass and a ready marker is written. Exact retries reuse the
-ready version; partial or failed attempts leave the previous version live. The
-real verification published 96 current and 558 authorized history rows. Local
-API calls fell from multi-second Trino/R2 queries to about 0.02 seconds, and the
-server-rendered page measured about 0.17 seconds. R2/Iceberg remains canonical,
-and the serving copy performs no new business calculations.
+`publish_tested_dimensional_mart_to_clickhouse` task publishes the
+product-shaped current and history projections to versioned native `MergeTree`
+tables. The first run, or a run without a healthy base, publishes every row.
+Later runs compare the complete tested marts with the last ready version, clone
+unchanged rows inside ClickHouse, and insert only new or updated rows into
+ClickHouse. Deleted keys are removed from the hidden new version. A new version
+remains invisible until its counts, keys, tenant scopes, date coverage, and
+content hashes pass and a ready marker is written. Durable per-dataset counts
+record inserted, updated, deleted, and unchanged rows. This is checkpointed
+publication after each tested batch, not continuous CDC. Exact retries reuse
+the ready version; partial or failed attempts leave the previous version live.
+The first real verification published 96 current and 558 authorized history
+rows. Local API calls fell from multi-second Trino/R2 queries to about 0.02
+seconds, and the server-rendered page measured about 0.17 seconds. R2/Iceberg
+remains canonical, and the serving copy performs no new business calculations.
 
 **Production-readiness controls milestone:** implemented and Airflow-image
 verified on 2026-09-02. A separate noon `Europe/London` daily DAG calls the
@@ -134,6 +140,7 @@ The focused read-only product is described in the
 [historical delivery product architecture](architecture/historical-steam-delivery-product.md),
 [ClickHouse frontend serving architecture](architecture/clickhouse-frontend-serving-layer.md),
 [daily publication and serving ADR](architecture/adr-003-daily-publication-and-serving-operations.md),
+[incremental ClickHouse publication ADR](architecture/adr-004-incremental-clickhouse-serving-publication.md),
 [API readiness and capacity checks](operations/api-production-readiness.md),
 [ClickHouse retention and recovery](operations/clickhouse-serving-retention-and-recovery.md),
 [API guide](../apps/api/README.md), and [web guide](../apps/web/README.md).
@@ -189,8 +196,10 @@ enforcement, and the complete product-security scope below.
 
 ## Optional extensions
 
-- Incremental ClickHouse publication only after data growth makes full
-  versioned snapshots expensive. Count-based cleanup keeps the newest two ready
+- Continuous CDC only if the business later needs changes between tested batch
+  publications. It would need a source change stream, durable checkpoints,
+  update/delete rules, schema handling, monitoring, and a long-running Spark
+  Structured Streaming job. Count-based cleanup keeps the newest two ready
   versions now; a longer time-based client-retention promise remains a future
   operating-policy decision.
 - MCP exposure of the same governed read-only tools.

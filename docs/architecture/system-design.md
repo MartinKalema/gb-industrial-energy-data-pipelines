@@ -61,6 +61,11 @@ here.
 | FastAPI | Authorization, product contracts, ready-version selection, governed tool calls | Arbitrary user SQL or canonical data storage |
 | Next.js | Role-specific product experience | Security enforcement by itself |
 
+The ClickHouse serving database has four tables: current delivery rows,
+delivery-history rows, ready publication markers, and durable per-publication
+change summaries. The product API reads the first three. The change summary is
+for operations and audit evidence.
+
 ## Storage layers
 
 Use layers by responsibility rather than treating medallion names as the model:
@@ -82,13 +87,19 @@ Raw retention makes revised market publications, meter corrections, and stream-g
    the history fact, build the dimensions, and run the final mart tests.
 5. If a dbt task fails, Airflow retries only that task. The final test task
    certifies the complete mart as ready after the earlier checkpoints succeed.
-6. Airflow copies the tested product projections to a new ClickHouse
-   `load_attempt_id`, validates the copy, and inserts its ready marker last.
-7. A failed publication stays invisible and the API continues serving the
-   previous good version. An exact retry reuses the ready version.
-8. A serialized cleanup task protects the newest two ready versions when they
+6. Airflow reads the complete tested product projections and compares them with
+   the newest healthy ClickHouse version. It creates a hidden new
+   `load_attempt_id`, clones unchanged rows inside ClickHouse, removes deleted
+   or replaced keys, and inserts only new or updated rows into ClickHouse. With
+   no healthy base it publishes every row instead.
+7. Airflow validates the complete hidden version, records durable per-dataset
+   change counts, and inserts its ready marker last.
+8. A failed publication stays invisible and the API continues serving the
+   previous marked-ready version. An exact retry reuses the ready version.
+9. A serialized cleanup task protects the newest two ready versions when they
    exist and removes older or incomplete ClickHouse copies.
-9. The high-water mark advances only after durable writes and required checks succeed.
+10. The high-water mark advances only after durable writes and required checks
+    succeed.
 
 ## Streaming flow
 
@@ -196,6 +207,7 @@ Spark/Trino remain out until their operational need is measured.
 | Trino for dbt | Clear SQL path and good portfolio explanation | Not the stream processor |
 | ClickHouse for frontend serving | About 0.02-second local API calls over versioned native tables | Duplicates tested product data and adds a release step |
 | Ready marker written last | Partial or invalid candidates stay invisible | Cleanup must be serialized and remove markers before rows |
+| Checkpointed incremental ClickHouse publication | Sends only new and updated rows into ClickHouse while validating the complete result | Still reads the complete marts from Trino, compares every row, and copies unchanged rows inside ClickHouse |
 | Spark as the only stream processor | One owner for event-time state, checkpoints, deduplication, and Iceberg stream commits | Additional JVM/container footprint |
 | Redpanda single node | Kafka semantics with lighter local operations | Not representative of broker high availability |
 | Synthetic plant data | Reproducible edge cases and legal clarity | Must be labelled; cannot prove real plant integration |
@@ -204,8 +216,9 @@ Spark/Trino remain out until their operational need is measured.
 ## Revisit as the system grows
 
 - R2 Data Catalog beta suitability and authentication after the smoke test
-- Incremental ClickHouse publication after data growth; revisit whether the
-  current two-ready-version minimum needs a time-based client promise
+- Continuous CDC only if the business needs changes between tested batch
+  publications; revisit whether the current two-ready-version minimum needs a
+  time-based client promise
 - Spark sizing and tuning once event volume is measured; replacing it requires a new ADR
 - Multi-tenant policy enforcement below the API layer
 - Semantic layer choice after the first metrics are stable

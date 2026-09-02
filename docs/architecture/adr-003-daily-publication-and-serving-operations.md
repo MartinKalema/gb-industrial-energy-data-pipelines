@@ -94,7 +94,7 @@ workflows and their operating evidence.
 | Noon daily schedule | Allows the current synthetic next-morning corrections to exist before extraction | Data is intentionally not near-real-time |
 | 16:00 deadline | Gives the complete bounded child workflow time to finish and makes lateness visible | It measures when the child run becomes observable as successful, not the ready marker's own timestamp; the local laptop must be running and missed days need an explicit backfill |
 | 30-hour API backstop | Prevents an old ready marker remaining healthy indefinitely | It is less exact than checking the expected operating date, which remains the daily DAG's job |
-| Protect the newest two ready versions | Preserves current and previous good product copies once both exist; a first publication naturally has only one | It is not a time-based promise for long-lived browser sessions |
+| Protect the newest two ready versions | Preserves current and previous marked-ready product copies once both exist; a first publication naturally has only one | Retention does not revalidate old copies, and this is not a time-based promise for long-lived browser sessions |
 | Marker-first deletion | An interrupted cleanup cannot leave a selectable partial version | Cleanup requires synchronous mutations and the exclusive writer pool |
 | Fail closed without production identity | Prevents demo headers being mistaken for real authentication | A production deployment cannot become ready until an identity provider is selected and implemented |
 

@@ -250,7 +250,7 @@ def steam_delivery_data_pipeline():
         coverage_result: dict[str, Any],
         dbt_test_result: dict[str, Any],
     ) -> dict[str, Any]:
-        """Publish the fully tested delivery read model for the frontend."""
+        """Incrementally publish the tested delivery read model to ClickHouse."""
 
         from ingestion.batch.pipeline.workflow import (
             publish_tested_dimensional_mart_to_clickhouse as publish_mart,

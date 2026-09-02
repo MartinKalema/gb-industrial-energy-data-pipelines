@@ -31,11 +31,14 @@ from typing import Any, Protocol
 from .models import PipelineError
 from .trino_loader import QueryResult, StatementRunner, TrinoHttpClient
 
-SERVING_SCHEMA_VERSION = "historical-delivery-serving-v1"
+SERVING_SCHEMA_VERSION = "historical-delivery-serving-v2-incremental-copy"
 CURRENT_TABLE = "delivery_interval_current"
 HISTORY_TABLE = "delivery_interval_history"
 PUBLICATION_TABLE = "data_publication"
+CHANGE_SUMMARY_TABLE = "data_publication_change_summary"
 READY_STATUS = "ready"
+FULL_PUBLICATION_MODE = "full"
+INCREMENTAL_PUBLICATION_MODE = "incremental"
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 SAFE_ATTEMPT_ID = re.compile(r"^publication-[a-f0-9]{32}$")
@@ -45,6 +48,7 @@ CURRENT_SORTING_KEY = (
 )
 HISTORY_SORTING_KEY = "load_attempt_id, interval_key, known_from_at, history_key"
 PUBLICATION_SORTING_KEY = "published_at_utc, publication_id"
+CHANGE_SUMMARY_SORTING_KEY = "load_attempt_id, dataset_name"
 PUBLICATION_COLUMNS = (
     ("publication_id", "String"),
     ("source_fingerprint_sha256", "FixedString(64)"),
@@ -59,6 +63,18 @@ PUBLICATION_COLUMNS = (
     ("maximum_reporting_date", "Nullable(Date)"),
     ("published_at_utc", "DateTime64(6, 'UTC')"),
     ("publication_status", "LowCardinality(String)"),
+)
+CHANGE_SUMMARY_COLUMNS = (
+    ("load_attempt_id", "String"),
+    ("base_publication_id", "Nullable(String)"),
+    ("dataset_name", "LowCardinality(String)"),
+    ("publication_mode", "LowCardinality(String)"),
+    ("source_row_count", "UInt64"),
+    ("inserted_row_count", "UInt64"),
+    ("updated_row_count", "UInt64"),
+    ("deleted_row_count", "UInt64"),
+    ("unchanged_row_count", "UInt64"),
+    ("recorded_at_utc", "DateTime64(6, 'UTC')"),
 )
 
 
@@ -555,11 +571,51 @@ class PublicationRecord:
             publication_status=str(value["publication_status"]),
         )
 
-    def xcom_summary(self, *, disposition: str) -> dict[str, Any]:
+    def xcom_summary(
+        self,
+        *,
+        disposition: str,
+        change_summaries: Sequence[DatasetChangeSummary],
+    ) -> dict[str, Any]:
+        summaries = _validate_change_summaries(
+            change_summaries, load_attempt_id=self.publication_id
+        )
+        expected_source_counts = {
+            CURRENT_TABLE: self.current_row_count,
+            HISTORY_TABLE: self.history_row_count,
+        }
+        expected_recorded_at = _normalize_utc_datetime(
+            self.published_at_utc, "publication published_at_utc"
+        )
+        for summary in summaries:
+            if summary.source_row_count != expected_source_counts[summary.dataset_name]:
+                raise ServingPublicationError(
+                    "publication change summary row count disagrees with its ready marker"
+                )
+            if (
+                _normalize_utc_datetime(
+                    summary.recorded_at_utc, "change summary recorded_at_utc"
+                )
+                != expected_recorded_at
+            ):
+                raise ServingPublicationError(
+                    "publication change summary timestamp disagrees with its ready marker"
+                )
+        modes = {summary.publication_mode for summary in summaries}
+        base_ids = {summary.base_publication_id for summary in summaries}
+        if len(modes) != 1 or len(base_ids) != 1:
+            raise ServingPublicationError(
+                "publication change summaries disagree on mode or base publication"
+            )
         return {
             "pipeline_run_id": self.pipeline_run_id,
             "publication_id": self.publication_id,
             "disposition": disposition,
+            "publication_mode": next(iter(modes)),
+            "base_publication_id": next(iter(base_ids)),
+            "change_counts": {
+                summary.dataset_name: summary.xcom_counts() for summary in summaries
+            },
             "source_fingerprint_sha256": self.source_fingerprint_sha256,
             "coverage_payload_sha256": self.coverage_payload_sha256,
             "dbt_result_identity_sha256": self.dbt_result_identity_sha256,
@@ -571,6 +627,100 @@ class PublicationRecord:
             "maximum_reporting_date": self.maximum_reporting_date,
             "published_at_utc": self.published_at_utc,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetChangeSummary:
+    """Durable audit counts for one dataset in one serving publication."""
+
+    load_attempt_id: str
+    base_publication_id: str | None
+    dataset_name: str
+    publication_mode: str
+    source_row_count: int
+    inserted_row_count: int
+    updated_row_count: int
+    deleted_row_count: int
+    unchanged_row_count: int
+    recorded_at_utc: str
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> DatasetChangeSummary:
+        return cls(
+            load_attempt_id=str(value["load_attempt_id"]),
+            base_publication_id=(
+                None
+                if value.get("base_publication_id") is None
+                else str(value["base_publication_id"])
+            ),
+            dataset_name=str(value["dataset_name"]),
+            publication_mode=str(value["publication_mode"]),
+            source_row_count=int(value["source_row_count"]),
+            inserted_row_count=int(value["inserted_row_count"]),
+            updated_row_count=int(value["updated_row_count"]),
+            deleted_row_count=int(value["deleted_row_count"]),
+            unchanged_row_count=int(value["unchanged_row_count"]),
+            recorded_at_utc=_normalize_utc_datetime(
+                value["recorded_at_utc"], "change summary recorded_at_utc"
+            ),
+        )
+
+    def xcom_counts(self) -> dict[str, int]:
+        return {
+            "source_row_count": self.source_row_count,
+            "inserted_row_count": self.inserted_row_count,
+            "updated_row_count": self.updated_row_count,
+            "deleted_row_count": self.deleted_row_count,
+            "unchanged_row_count": self.unchanged_row_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetChangePlan:
+    """Rows and keys needed to turn a cloned base into the tested source."""
+
+    dataset: DatasetSpec
+    source_row_count: int
+    inserted_rows: tuple[dict[str, Any], ...]
+    updated_rows: tuple[dict[str, Any], ...]
+    deleted_keys: tuple[str, ...]
+    unchanged_row_count: int
+
+    @property
+    def replacement_rows(self) -> tuple[dict[str, Any], ...]:
+        return self.inserted_rows + self.updated_rows
+
+    @property
+    def keys_to_remove_from_clone(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                set(self.deleted_keys)
+                | {
+                    str(row[self.dataset.key_name]) for row in self.updated_rows
+                }
+            )
+        )
+
+    def summary(
+        self,
+        *,
+        load_attempt_id: str,
+        base_publication_id: str | None,
+        publication_mode: str,
+        recorded_at_utc: str,
+    ) -> DatasetChangeSummary:
+        return DatasetChangeSummary(
+            load_attempt_id=load_attempt_id,
+            base_publication_id=base_publication_id,
+            dataset_name=self.dataset.table_name,
+            publication_mode=publication_mode,
+            source_row_count=self.source_row_count,
+            inserted_row_count=len(self.inserted_rows),
+            updated_row_count=len(self.updated_rows),
+            deleted_row_count=len(self.deleted_keys),
+            unchanged_row_count=self.unchanged_row_count,
+            recorded_at_utc=recorded_at_utc,
+        )
 
 
 class MartReader(Protocol):
@@ -588,6 +738,24 @@ class ServingStore(Protocol):
         self, source_fingerprint_sha256: str
     ) -> PublicationRecord | None: ...
 
+    def find_latest_ready_publication(self) -> PublicationRecord | None: ...
+
+    def clone_candidate_rows(
+        self,
+        dataset: DatasetSpec,
+        *,
+        base_publication_id: str,
+        load_attempt_id: str,
+    ) -> None: ...
+
+    def delete_candidate_keys(
+        self,
+        dataset: DatasetSpec,
+        *,
+        load_attempt_id: str,
+        keys: Sequence[str],
+    ) -> None: ...
+
     def insert_candidate_rows(
         self,
         dataset: DatasetSpec,
@@ -598,6 +766,14 @@ class ServingStore(Protocol):
     def read_candidate_rows(
         self, dataset: DatasetSpec, load_attempt_id: str
     ) -> list[dict[str, Any]]: ...
+
+    def insert_change_summaries(
+        self, summaries: Sequence[DatasetChangeSummary]
+    ) -> None: ...
+
+    def read_change_summaries(
+        self, load_attempt_id: str
+    ) -> list[DatasetChangeSummary]: ...
 
     def insert_publication(self, publication: PublicationRecord) -> None: ...
 
@@ -789,6 +965,18 @@ class ClickHouseServingStore:
             ORDER BY ({PUBLICATION_SORTING_KEY})
         """
 
+    @property
+    def change_summary_table_sql(self) -> str:
+        columns = ",\n                ".join(
+            f"{name} {column_type}" for name, column_type in CHANGE_SUMMARY_COLUMNS
+        )
+        return f"""
+            CREATE TABLE IF NOT EXISTS {_qualified_clickhouse_table(self._config.clickhouse_database, CHANGE_SUMMARY_TABLE)} (
+                {columns}
+            ) ENGINE = MergeTree
+            ORDER BY ({CHANGE_SUMMARY_SORTING_KEY})
+        """
+
     def _dataset_table_sql(self, dataset: DatasetSpec) -> str:
         column_lines = ["load_attempt_id String"]
         column_lines.extend(
@@ -811,6 +999,7 @@ class ClickHouseServingStore:
         self._client.execute(self.current_table_sql)
         self._client.execute(self.history_table_sql)
         self._client.execute(self.publication_table_sql)
+        self._client.execute(self.change_summary_table_sql)
         self._verify_table_contract(
             CURRENT_TABLE,
             (("load_attempt_id", "String"),)
@@ -831,6 +1020,11 @@ class ClickHouseServingStore:
             PUBLICATION_TABLE,
             PUBLICATION_COLUMNS,
             PUBLICATION_SORTING_KEY,
+        )
+        self._verify_table_contract(
+            CHANGE_SUMMARY_TABLE,
+            CHANGE_SUMMARY_COLUMNS,
+            CHANGE_SUMMARY_SORTING_KEY,
         )
 
     def _verify_table_contract(
@@ -875,7 +1069,20 @@ class ClickHouseServingStore:
         self, source_fingerprint_sha256: str
     ) -> PublicationRecord | None:
         _require_sha256(source_fingerprint_sha256, "source fingerprint")
-        rows = self._client.query_json_rows(
+        rows = self._publication_rows(
+            f"source_fingerprint_sha256 = '{source_fingerprint_sha256}' AND "
+            f"publication_status = '{READY_STATUS}'"
+        )
+        return None if not rows else PublicationRecord.from_mapping(rows[0])
+
+    def find_latest_ready_publication(self) -> PublicationRecord | None:
+        rows = self._publication_rows(
+            f"publication_status = '{READY_STATUS}'"
+        )
+        return None if not rows else PublicationRecord.from_mapping(rows[0])
+
+    def _publication_rows(self, where_sql: str) -> list[dict[str, Any]]:
+        return self._client.query_json_rows(
             f"""
                 SELECT
                     publication_id,
@@ -892,14 +1099,73 @@ class ClickHouseServingStore:
                     published_at_utc,
                     publication_status
                 FROM {_qualified_clickhouse_table(self._config.clickhouse_database, PUBLICATION_TABLE)}
-                WHERE source_fingerprint_sha256 = '{source_fingerprint_sha256}'
-                  AND publication_status = '{READY_STATUS}'
+                WHERE {where_sql}
                 ORDER BY published_at_utc DESC, publication_id DESC
                 LIMIT 1
             """,
             database=self._config.clickhouse_database,
         )
-        return None if not rows else PublicationRecord.from_mapping(rows[0])
+
+    def clone_candidate_rows(
+        self,
+        dataset: DatasetSpec,
+        *,
+        base_publication_id: str,
+        load_attempt_id: str,
+    ) -> None:
+        _require_attempt_id(base_publication_id)
+        _require_attempt_id(load_attempt_id)
+        columns = ", ".join(
+            ["load_attempt_id"]
+            + [_clickhouse_identifier(name) for name in dataset.column_names]
+        )
+        source_columns = ", ".join(
+            [_clickhouse_string_literal(load_attempt_id)]
+            + [_clickhouse_identifier(name) for name in dataset.column_names]
+        )
+        qualified_table = _qualified_clickhouse_table(
+            self._config.clickhouse_database, dataset.table_name
+        )
+        self._client.execute(
+            f"""
+                INSERT INTO {qualified_table} ({columns})
+                SELECT {source_columns}
+                FROM {qualified_table}
+                WHERE load_attempt_id = {_clickhouse_string_literal(base_publication_id)}
+            """,
+            database=self._config.clickhouse_database,
+        )
+
+    def delete_candidate_keys(
+        self,
+        dataset: DatasetSpec,
+        *,
+        load_attempt_id: str,
+        keys: Sequence[str],
+    ) -> None:
+        _require_attempt_id(load_attempt_id)
+        unique_keys = tuple(sorted(set(keys)))
+        _require_dataset_keys(unique_keys, dataset)
+        if not unique_keys:
+            return
+        qualified_table = _qualified_clickhouse_table(
+            self._config.clickhouse_database, dataset.table_name
+        )
+        key_name = _clickhouse_identifier(dataset.key_name)
+        for offset in range(0, len(unique_keys), self._config.insert_batch_size):
+            batch = unique_keys[offset : offset + self._config.insert_batch_size]
+            key_literals = ", ".join(
+                _clickhouse_string_literal(key) for key in batch
+            )
+            self._client.execute(
+                f"""
+                    ALTER TABLE {qualified_table}
+                    DELETE WHERE load_attempt_id = {_clickhouse_string_literal(load_attempt_id)}
+                      AND {key_name} IN ({key_literals})
+                    SETTINGS mutations_sync = 2
+                """,
+                database=self._config.clickhouse_database,
+            )
 
     def insert_candidate_rows(
         self,
@@ -937,11 +1203,42 @@ class ClickHouseServingStore:
             f"""
                 SELECT {columns}
                 FROM {_qualified_clickhouse_table(self._config.clickhouse_database, dataset.table_name)}
-                WHERE load_attempt_id = '{load_attempt_id}'
+                WHERE load_attempt_id = {_clickhouse_string_literal(load_attempt_id)}
                 ORDER BY {_clickhouse_identifier(dataset.key_name)}
             """,
             database=self._config.clickhouse_database,
         )
+
+    def insert_change_summaries(
+        self, summaries: Sequence[DatasetChangeSummary]
+    ) -> None:
+        validated = _validate_change_summaries(summaries)
+        self._client.insert_json_rows(
+            CHANGE_SUMMARY_TABLE,
+            [asdict(summary) for summary in validated],
+            database=self._config.clickhouse_database,
+        )
+
+    def read_change_summaries(
+        self, load_attempt_id: str
+    ) -> list[DatasetChangeSummary]:
+        _require_attempt_id(load_attempt_id)
+        columns = ", ".join(name for name, _column_type in CHANGE_SUMMARY_COLUMNS)
+        rows = self._client.query_json_rows(
+            f"""
+                SELECT {columns}
+                FROM {_qualified_clickhouse_table(self._config.clickhouse_database, CHANGE_SUMMARY_TABLE)}
+                WHERE load_attempt_id = {_clickhouse_string_literal(load_attempt_id)}
+                ORDER BY dataset_name
+            """,
+            database=self._config.clickhouse_database,
+        )
+        try:
+            return [DatasetChangeSummary.from_mapping(row) for row in rows]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ServingPublicationError(
+                "stored publication change summary is malformed"
+            ) from exc
 
     def insert_publication(self, publication: PublicationRecord) -> None:
         if publication.publication_status != READY_STATUS:
@@ -1018,15 +1315,49 @@ class ServingPublisher:
                 profiles=source_profiles,
             )
             if self._stored_publication_matches(existing, source_profiles):
-                return existing.xcom_summary(disposition="reused")
+                return existing.xcom_summary(
+                    disposition="reused",
+                    change_summaries=self._serving_store.read_change_summaries(
+                        existing.publication_id
+                    ),
+                )
 
         load_attempt_id = self._attempt_id_factory()
         _require_attempt_id(load_attempt_id)
+        latest = self._serving_store.find_latest_ready_publication()
+        base_rows = self._read_usable_base(latest) if latest is not None else None
+        base_publication_id = (
+            latest.publication_id if latest is not None and base_rows is not None else None
+        )
+        publication_mode = (
+            INCREMENTAL_PUBLICATION_MODE
+            if base_publication_id is not None
+            else FULL_PUBLICATION_MODE
+        )
+        change_plans: dict[str, DatasetChangePlan] = {}
         for dataset in SERVING_DATASETS:
+            source_dataset_rows = source_rows[dataset.table_name]
+            if base_rows is None:
+                plan = _plan_full_dataset(dataset, source_dataset_rows)
+            else:
+                plan = _plan_dataset_changes(
+                    dataset,
+                    source_dataset_rows,
+                    base_rows[dataset.table_name],
+                )
+                self._serving_store.clone_candidate_rows(
+                    dataset,
+                    base_publication_id=base_publication_id,
+                    load_attempt_id=load_attempt_id,
+                )
+                self._serving_store.delete_candidate_keys(
+                    dataset,
+                    load_attempt_id=load_attempt_id,
+                    keys=plan.keys_to_remove_from_clone,
+                )
+            change_plans[dataset.table_name] = plan
             self._serving_store.insert_candidate_rows(
-                dataset,
-                load_attempt_id,
-                source_rows[dataset.table_name],
+                dataset, load_attempt_id, plan.replacement_rows
             )
 
         for dataset in SERVING_DATASETS:
@@ -1047,6 +1378,22 @@ class ServingPublisher:
         minimum_date, maximum_date = _combined_date_coverage(
             current_profile, history_profile
         )
+        publication_time = _normalize_utc_datetime(
+            self._clock(), "publication clock"
+        )
+        change_summaries = tuple(
+            change_plans[dataset.table_name].summary(
+                load_attempt_id=load_attempt_id,
+                base_publication_id=base_publication_id,
+                publication_mode=publication_mode,
+                recorded_at_utc=publication_time,
+            )
+            for dataset in SERVING_DATASETS
+        )
+        # The summary is durable operational evidence, but it does not make the
+        # candidate visible. A failed marker write leaves an ordinary unmarked
+        # attempt that retention can safely remove.
+        self._serving_store.insert_change_summaries(change_summaries)
         publication = PublicationRecord(
             publication_id=load_attempt_id,
             source_fingerprint_sha256=source_fingerprint,
@@ -1059,20 +1406,18 @@ class ServingPublisher:
             history_content_sha256=str(history_profile["content_sha256"]),
             minimum_reporting_date=minimum_date,
             maximum_reporting_date=maximum_date,
-            published_at_utc=_normalize_utc_datetime(
-                self._clock(), "publication clock"
-            ),
+            published_at_utc=publication_time,
         )
         # This is deliberately the final write.  Without this marker, partial
         # candidate rows cannot be selected by the frontend repository.
         self._serving_store.insert_publication(publication)
-        return publication.xcom_summary(disposition="created")
+        return publication.xcom_summary(
+            disposition="created", change_summaries=change_summaries
+        )
 
-    def _stored_publication_matches(
-        self,
-        publication: PublicationRecord,
-        source_profiles: Mapping[str, Mapping[str, Any]],
-    ) -> bool:
+    def _read_usable_base(
+        self, publication: PublicationRecord
+    ) -> dict[str, list[dict[str, Any]]] | None:
         marker_profiles = {
             CURRENT_TABLE: (
                 publication.current_row_count,
@@ -1083,9 +1428,8 @@ class ServingPublisher:
                 publication.history_content_sha256,
             ),
         }
+        base_rows: dict[str, list[dict[str, Any]]] = {}
         for dataset in SERVING_DATASETS:
-            # Keep transport/protocol failures distinct from confirmed stored-row
-            # damage: an unavailable database must fail rather than trigger writes.
             stored_rows = self._serving_store.read_candidate_rows(
                 dataset, publication.publication_id
             )
@@ -1093,17 +1437,34 @@ class ServingPublisher:
                 normalized_rows = _normalize_dataset_rows(
                     dataset,
                     stored_rows,
-                    boundary="ClickHouse candidate",
+                    boundary="ClickHouse base publication",
                 )
                 stored_profile = _profile_dataset(dataset, normalized_rows)
             except ServingPublicationError:
-                return False
+                return None
             marker_count, marker_hash = marker_profiles[dataset.table_name]
             if (
-                stored_profile != source_profiles[dataset.table_name]
-                or stored_profile["row_count"] != marker_count
+                stored_profile["row_count"] != marker_count
                 or stored_profile["content_sha256"] != marker_hash
             ):
+                return None
+            base_rows[dataset.table_name] = normalized_rows
+        return base_rows
+
+    def _stored_publication_matches(
+        self,
+        publication: PublicationRecord,
+        source_profiles: Mapping[str, Mapping[str, Any]],
+    ) -> bool:
+        # Protocol failures from _read_usable_base propagate. Confirmed content
+        # damage returns None and causes a fresh full publication instead.
+        stored_rows = self._read_usable_base(publication)
+        if stored_rows is None:
+            return False
+        for dataset in SERVING_DATASETS:
+            if _profile_dataset(
+                dataset, stored_rows[dataset.table_name]
+            ) != source_profiles[dataset.table_name]:
                 return False
         return True
 
@@ -1126,6 +1487,153 @@ def dbt_result_identity(dbt_result: Mapping[str, Any]) -> str:
         "test_result_count": dbt_result.get("test_result_count"),
     }
     return _sha256_json(identity)
+
+
+def _plan_full_dataset(
+    dataset: DatasetSpec, source_rows: Sequence[Mapping[str, Any]]
+) -> DatasetChangePlan:
+    """Create a complete candidate when no trustworthy base is available."""
+
+    ordered = tuple(
+        dict(row)
+        for row in sorted(source_rows, key=lambda row: str(row[dataset.key_name]))
+    )
+    return DatasetChangePlan(
+        dataset=dataset,
+        source_row_count=len(ordered),
+        inserted_rows=ordered,
+        updated_rows=(),
+        deleted_keys=(),
+        unchanged_row_count=0,
+    )
+
+
+def _plan_dataset_changes(
+    dataset: DatasetSpec,
+    source_rows: Sequence[Mapping[str, Any]],
+    base_rows: Sequence[Mapping[str, Any]],
+) -> DatasetChangePlan:
+    """Return the exact changes needed after cloning one complete base."""
+
+    source_by_key = {str(row[dataset.key_name]): dict(row) for row in source_rows}
+    base_by_key = {str(row[dataset.key_name]): dict(row) for row in base_rows}
+    if len(source_by_key) != len(source_rows) or len(base_by_key) != len(base_rows):
+        raise ServingPublicationError(
+            f"{dataset.table_name} change planning requires unique keys"
+        )
+    _require_dataset_keys(tuple(source_by_key), dataset)
+    _require_dataset_keys(tuple(base_by_key), dataset)
+
+    source_keys = set(source_by_key)
+    base_keys = set(base_by_key)
+    inserted_keys = sorted(source_keys - base_keys)
+    deleted_keys = tuple(sorted(base_keys - source_keys))
+    updated_keys: list[str] = []
+    unchanged_count = 0
+    for key in sorted(source_keys & base_keys):
+        if source_by_key[key] == base_by_key[key]:
+            unchanged_count += 1
+        else:
+            updated_keys.append(key)
+    return DatasetChangePlan(
+        dataset=dataset,
+        source_row_count=len(source_rows),
+        inserted_rows=tuple(source_by_key[key] for key in inserted_keys),
+        updated_rows=tuple(source_by_key[key] for key in updated_keys),
+        deleted_keys=deleted_keys,
+        unchanged_row_count=unchanged_count,
+    )
+
+
+def _validate_change_summaries(
+    summaries: Sequence[DatasetChangeSummary],
+    *,
+    load_attempt_id: str | None = None,
+) -> tuple[DatasetChangeSummary, ...]:
+    """Validate the two-row operational audit before storage or XCom use."""
+
+    ordered = tuple(sorted(summaries, key=lambda summary: summary.dataset_name))
+    expected_datasets = {dataset.table_name for dataset in SERVING_DATASETS}
+    if {summary.dataset_name for summary in ordered} != expected_datasets or len(
+        ordered
+    ) != len(expected_datasets):
+        raise ServingPublicationError(
+            "publication change summary must contain exactly one row per dataset"
+        )
+    if len({summary.load_attempt_id for summary in ordered}) != 1:
+        raise ServingPublicationError(
+            "publication change summaries disagree on load attempt"
+        )
+    if len({summary.publication_mode for summary in ordered}) != 1 or len(
+        {summary.base_publication_id for summary in ordered}
+    ) != 1:
+        raise ServingPublicationError(
+            "publication change summaries disagree on mode or base publication"
+        )
+    for summary in ordered:
+        _require_attempt_id(summary.load_attempt_id)
+        if load_attempt_id is not None and summary.load_attempt_id != load_attempt_id:
+            raise ServingPublicationError(
+                "publication change summary belongs to another load attempt"
+            )
+        if summary.publication_mode not in {
+            FULL_PUBLICATION_MODE,
+            INCREMENTAL_PUBLICATION_MODE,
+        }:
+            raise ServingPublicationError(
+                "publication change summary has an unsupported mode"
+            )
+        if summary.base_publication_id is not None:
+            _require_attempt_id(summary.base_publication_id)
+            if summary.base_publication_id == summary.load_attempt_id:
+                raise ServingPublicationError(
+                    "an incremental publication cannot use itself as its base"
+                )
+        if summary.publication_mode == FULL_PUBLICATION_MODE:
+            if summary.base_publication_id is not None:
+                raise ServingPublicationError(
+                    "a full publication change summary cannot have a base"
+                )
+            if any(
+                (
+                    summary.updated_row_count,
+                    summary.deleted_row_count,
+                    summary.unchanged_row_count,
+                )
+            ):
+                raise ServingPublicationError(
+                    "a full publication change summary must count every row as inserted"
+                )
+        elif summary.base_publication_id is None:
+            raise ServingPublicationError(
+                "an incremental publication change summary requires a base"
+            )
+        counts = (
+            summary.source_row_count,
+            summary.inserted_row_count,
+            summary.updated_row_count,
+            summary.deleted_row_count,
+            summary.unchanged_row_count,
+        )
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in counts
+        ):
+            raise ServingPublicationError(
+                "publication change summary counts must be non-negative integers"
+            )
+        if summary.source_row_count != (
+            summary.inserted_row_count
+            + summary.updated_row_count
+            + summary.unchanged_row_count
+        ):
+            raise ServingPublicationError(
+                "publication change summary counts do not reconcile to the source"
+            )
+        _normalize_utc_datetime(
+            summary.recorded_at_utc, "change summary recorded_at_utc"
+        )
+    return ordered
 
 
 def _normalize_dataset_rows(
@@ -1194,7 +1702,12 @@ def _normalize_value(
             return _normalize_utc_datetime(
                 value,
                 label,
-                allow_naive=boundary == "ClickHouse candidate",
+                # ClickHouse DateTime64 values are already stored in the table's
+                # UTC timezone, but toString() returns them without an offset.
+                # Both candidate validation and later base-version reads cross
+                # this same trusted database boundary.
+                allow_naive=boundary
+                in {"ClickHouse candidate", "ClickHouse base publication"},
             )
         if field.value_kind == "local_datetime":
             return _normalize_local_datetime(value, label)
@@ -1261,6 +1774,7 @@ def _profile_dataset(
         raise ServingPublicationError(
             f"{dataset.table_name} contains duplicate {dataset.key_name} values"
         )
+    _require_dataset_keys(keys, dataset)
     if any(not str(row["tenant_authorization_scope_id"]).strip() for row in rows):
         raise ServingPublicationError(
             f"{dataset.table_name} contains a missing tenant authorization scope"
@@ -1377,6 +1891,14 @@ def _require_attempt_id(value: str) -> None:
         raise ServingPublicationError("load attempt ID has an invalid format")
 
 
+def _require_dataset_keys(values: Sequence[str], dataset: DatasetSpec) -> None:
+    for value in values:
+        if not isinstance(value, str) or not SHA256_PATTERN.fullmatch(value):
+            raise ServingPublicationError(
+                f"{dataset.table_name} contains an invalid {dataset.key_name} value"
+            )
+
+
 def _trino_identifier(value: str) -> str:
     if not SAFE_IDENTIFIER.fullmatch(value):
         raise ServingPublicationError("unsafe Trino identifier")
@@ -1387,6 +1909,14 @@ def _clickhouse_identifier(value: str) -> str:
     if not SAFE_IDENTIFIER.fullmatch(value):
         raise ServingPublicationError("unsafe ClickHouse identifier")
     return f"`{value}`"
+
+
+def _clickhouse_string_literal(value: str) -> str:
+    """Quote an already validated identifier-like value for ClickHouse SQL."""
+
+    if not isinstance(value, str) or not value or re.search(r"[^a-z0-9-]", value):
+        raise ServingPublicationError("unsafe ClickHouse string literal")
+    return f"'{value}'"
 
 
 def _qualified_clickhouse_table(database: str, table: str) -> str:

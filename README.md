@@ -29,9 +29,11 @@ Next.js interface lets commercial and customer personas investigate known,
 provisional, final, missing, and corrected interval results. The interface
 shows missing governed values as unavailable; it never changes them to zero.
 The tested mart is published to native ClickHouse tables before the product
-uses it. R2 and Iceberg remain the canonical data; ClickHouse is a rebuildable
-serving copy that removes lakehouse-query startup time from an interactive page
-request.
+uses it. The first publication copies the complete tested mart. Later
+publications compare it with the last ready version, reuse unchanged rows inside
+ClickHouse, and send only new or changed row payloads to ClickHouse. R2 and
+Iceberg remain the canonical data; ClickHouse is a rebuildable serving copy that
+removes lakehouse-query startup time from an interactive page request.
 
 ## Why this project
 
@@ -66,7 +68,8 @@ Airflow -> deterministic source generator -> original files in R2
         -> row checks -> accepted files / failed rows saved separately in R2
         -> local Trino -> typed Iceberg source tables on R2
         -> dbt -> current and source-knowledge dimensional marts on R2
-        -> final dbt tests -> versioned native ClickHouse serving tables
+        -> final dbt tests -> checkpointed incremental publication
+        -> versioned native ClickHouse serving tables
 
 STREAM
 Elexon IRIS AMQP ----> local bridge ----\
@@ -121,8 +124,12 @@ The final dbt checkpoint,
 `test_complete_dimensional_mart_with_dbt`, certifies the mart before it is used
 as product-ready data. Airflow then runs
 `publish_tested_dimensional_mart_to_clickhouse`. That task copies the tested
-current and history datasets into a new ClickHouse version, validates the copy,
-and makes it visible only after all checks pass. Start the local product profile
+current and history datasets in full when no usable base version exists. On
+later runs it compares the complete mart with the last ready version, copies
+unchanged rows inside ClickHouse, replaces only new or changed rows, and removes
+deleted keys from the new candidate. It validates the complete result and makes
+it visible only after all checks pass. This is scheduled incremental
+publication after a batch, not continuous CDC. Start the local product profile
 after a ready publication exists and is younger than the configured 30-hour
 limit. For an intentionally static historical demonstration only, explicitly
 set `PRODUCT_MAX_PUBLICATION_AGE_SECONDS=0` before starting it:
@@ -182,7 +189,7 @@ complete contract and local run instructions.
 | Current implementation phase | Phase 2 batch vertical slice — source load, dimensional mart, restartable coverage-to-dbt-to-ClickHouse orchestration, daily scheduling, freshness/readiness checks, serving retention/recovery, and the focused historical product are implemented; FUELHH remains |
 | Historical product API | Implemented: read-only, tenant-scoped FastAPI over ready ClickHouse versions sourced from governed current/history marts |
 | Historical web product | Implemented: server-rendered commercial/customer investigation and revision history |
-| Frontend serving database | Implemented: versioned native ClickHouse copy published only after the final dbt tests |
+| Frontend serving database | Implemented: versioned native ClickHouse copy with validated, checkpointed incremental publication after final dbt tests |
 
 Start with [the project brief](docs/discovery/project-brief.md), then review [data-source feasibility](docs/discovery/data-source-feasibility.md) and [Workshop 1](docs/modeling/01-business-process-workshop.md).
 

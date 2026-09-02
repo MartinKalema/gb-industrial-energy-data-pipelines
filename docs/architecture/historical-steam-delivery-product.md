@@ -96,6 +96,9 @@ timestamps, and result-status fields.
 The API reads only those two serving tables and
 `industrial_energy_serving.data_publication`. It does not read raw JSON,
 quarantine files, validated source tables, or unfinished ClickHouse candidates.
+The fourth serving table,
+`industrial_energy_serving.data_publication_change_summary`, stores operational
+change counts for each publication. The API does not need it for page queries.
 See the
 [ClickHouse frontend serving architecture](clickhouse-frontend-serving-layer.md)
 for the table and release contract.
@@ -172,9 +175,14 @@ and negative tests remain at the API boundary.
   integrity, and publication age meet the configured contract.
 - Airflow runs `publish_tested_dimensional_mart_to_clickhouse` only after
   `test_complete_dimensional_mart_with_dbt` succeeds.
+- The publisher reads and compares the complete tested marts. With a healthy
+  base version, it clones unchanged rows inside ClickHouse, removes deleted or
+  replaced keys from the hidden copy, and inserts only new or updated rows into
+  ClickHouse. With no healthy base, it publishes every row.
 - Candidate current and history rows carry a new `load_attempt_id`. They remain
-  invisible until exact validation passes and the matching `data_publication`
-  ready marker is inserted as the final write.
+  invisible until exact validation passes, durable change counts are stored,
+  and the matching `data_publication` ready marker is inserted as the final
+  write.
 - A partial load, validation failure, or timeout cannot replace the last good
   publication. An exact retry reuses the already-ready fingerprint.
 - Query and connection deadlines prevent a stalled ClickHouse request from
@@ -209,16 +217,17 @@ local project environment and are not general engine benchmarks.
 | Keep aggregate presentation in the typed API | Dashboard, later AI tools, and exports can share one contract | The API query contract must be regression-tested with dbt fixtures |
 | Explicit local demo identities | Makes authorization behavior visible and testable without fake production claims | It is not authentication and must never be enabled in a real deployment |
 | No cache in the first release | The measured serving database path is visible without hiding it behind another layer | Repeated queries still reach ClickHouse |
-| Full versioned publication first | Easy to compare, retry, and rebuild | Data growth may later justify incremental publication |
+| Checkpointed incremental publication | Sends only new and updated rows into ClickHouse while validating a complete version | Still reads the complete marts and copies unchanged rows inside ClickHouse |
 
 ## Revisit as usage grows
 
 - Add verified OIDC identities and policy-managed scopes before deployment.
 - Add a short-lived cache only after measuring repeated ClickHouse query latency and
   defining correction invalidation behavior.
-- Add incremental publication only when measured data growth justifies its
-  additional state and recovery logic. Revisit whether the current two-ready-
-  version minimum needs a longer time-based client promise.
+- Add continuous CDC only if the business needs changes between tested batch
+  publications. It would need a source change stream, durable checkpoints, and
+  a long-running Spark Structured Streaming job. Revisit whether the current
+  two-ready-version minimum needs a longer time-based client promise.
 - Move widely reused aggregate queries into dedicated dbt presentation models
   if another consumer needs direct SQL rather than the typed product API.
 - Add live operator views only after the Spark streaming slice has event-time,
